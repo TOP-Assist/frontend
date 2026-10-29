@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Bergische Universität Wuppertal
+# SPDX-FileCopyrightText: 2026 deepsight GmbH
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+node_modules
+.DS_Store
+dist
+dist-ssr
+coverage
+*.local
+*.tsbuildinfo
+.eslintcache
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

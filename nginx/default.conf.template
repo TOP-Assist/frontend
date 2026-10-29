@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 Bergische Universität Wuppertal
+# SPDX-FileCopyrightText: 2026 deepsight GmbH
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Vue SPA
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Re-resolve the backend periodically so that nginx follows it to a new
+    # address after a container restart. The resolver is filled in from
+    # /etc/resolv.conf by the nginx image's entrypoint at container start.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s;
+
+    # Backend API
+    location /v1/ {
+        set $backend http://backend:8000;
+        proxy_pass $backend;
+
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

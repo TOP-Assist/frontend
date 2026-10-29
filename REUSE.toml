@@ -1,0 +1,48 @@
+version = 1
+
+# Files that cannot carry an SPDX header themselves.
+[[annotations]]
+path = ["package.json", "package-lock.json", "tsconfig*.json", ".vscode/extensions.json"]
+SPDX-FileCopyrightText = ["2026 deepsight GmbH", "2026 Bergische Universität Wuppertal"]
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+[[annotations]]
+path = ["public/favicon.png", "src/assets/icons/*.png", "src/assets/logos/top-assist.png"]
+SPDX-FileCopyrightText = ["2026 deepsight GmbH", "2026 Bergische Universität Wuppertal"]
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# Partner and funding body logos remain the property of their owners.
+[[annotations]]
+path = "src/assets/logos/BBW.png"
+SPDX-FileCopyrightText = "Berufsbildungswerk Leipzig"
+SPDX-License-Identifier = "LicenseRef-Partner-Logos"
+
+[[annotations]]
+path = "src/assets/logos/BMAS.png"
+SPDX-FileCopyrightText = "Bundesministerium für Arbeit und Soziales"
+SPDX-License-Identifier = "LicenseRef-Partner-Logos"
+
+[[annotations]]
+path = "src/assets/logos/BUW.png"
+SPDX-FileCopyrightText = "Bergische Universität Wuppertal"
+SPDX-License-Identifier = "LicenseRef-Partner-Logos"
+
+[[annotations]]
+path = "src/assets/logos/deepsight.png"
+SPDX-FileCopyrightText = "deepsight GmbH"
+SPDX-License-Identifier = "LicenseRef-Partner-Logos"
+
+[[annotations]]
+path = "src/assets/logos/IFTO.png"
+SPDX-FileCopyrightText = "IFTO"
+SPDX-License-Identifier = "LicenseRef-Partner-Logos"
+
+[[annotations]]
+path = "src/assets/logos/OBB.png"
+SPDX-FileCopyrightText = "Oberlin Berufsbildung"
+SPDX-License-Identifier = "LicenseRef-Partner-Logos"
+
+[[annotations]]
+path = "src/assets/logos/ZFA.png"
+SPDX-FileCopyrightText = "ZFA-Medien"
+SPDX-License-Identifier = "LicenseRef-Partner-Logos"
