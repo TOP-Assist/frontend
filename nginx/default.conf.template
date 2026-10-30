@@ -10,9 +10,27 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Enable response compression.
+    gzip on;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_vary on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
     # Vue SPA
     location / {
         try_files $uri $uri/ /index.html;
+    }
+
+    # Always revalidate the entrypoint so clients pick up new asset hashes.
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+
+    # Vite emits content-hashed file names here, so they never change.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
     }
 
     # Re-resolve the backend periodically so that nginx follows it to a new
@@ -26,6 +44,8 @@ server {
         proxy_pass $backend;
 
         proxy_http_version 1.1;
+        # LLM translations can outlast nginx's 60s default.
+        proxy_read_timeout 300s;
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
