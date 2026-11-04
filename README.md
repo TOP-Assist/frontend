@@ -76,6 +76,58 @@ Files in `public/` are served as-is and should only hold assets that need a fixe
 
 ---
 
+## Releases
+
+Releases are made from git tags of the form `vX.Y.Z` (e.g. `v1.2.0`), which are the single source of truth for the version:
+
+- The `version` in `package.json` is not used for releases and stays at `0.0.0`.
+- The container image is tagged with the version **without** the `v` prefix, i.e. `v1.2.0` is published as `docker.io/therealdeepsight/top-assist-frontend:1.2.0`.
+
+To publish a release, tag the commit and push the tag:
+
+```bash
+git tag -a v1.2.0
+git push origin v1.2.0
+```
+
+The GitLab pipeline (`.gitlab-ci.yml`) then builds the image (with SBOM and provenance attestations and reproducible timestamps) and pushes it to Docker Hub.
+
+### Building images locally
+
+**GitLab builds release tags only.**
+Our GitLab hosts have asked us to be mindful of storage and compute, so there are no pipelines for branches or merge requests.
+Please build and test images on your own machine instead:
+
+```bash
+podman build -f Containerfile -t top-assist-frontend:dev .
+```
+
+Should the pipeline be unavailable, a maintainer may publish a release by hand with the same build command CI uses.
+Run it from a clean checkout of the release tag, as it pushes straight to Docker Hub:
+
+```bash
+TAG=v1.2.0
+VERSION="${TAG#v}"
+git switch --detach "$TAG"
+
+# One-time: create a builder that supports attestations.
+docker buildx create --name attest --driver docker-container
+
+docker buildx build -f Containerfile \
+  --builder attest \
+  --platform linux/amd64 \
+  --sbom=true --provenance=mode=max \
+  --build-arg SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)" \
+  --label org.opencontainers.image.version="$VERSION" \
+  --label org.opencontainers.image.revision="$(git rev-parse HEAD)" \
+  --label org.opencontainers.image.source="https://git.uni-wuppertal.de/top-assist/frontend" \
+  --output type=registry,rewrite-timestamp=true \
+  --tag docker.io/therealdeepsight/top-assist-frontend:"$VERSION" \
+  .
+```
+
+---
+
 ## Licensing
 
 This project follows the [REUSE specification](https://reuse.software/) so that every file carries machine-readable copyright and license information in [SPDX](https://spdx.dev/) format. The project is licensed under the [AGPL 3.0 or later](LICENSES/AGPL-3.0-or-later.txt); the full license texts are in `LICENSES/`.
