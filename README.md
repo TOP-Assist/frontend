@@ -81,7 +81,7 @@ Files in `public/` are served as-is and should only hold assets that need a fixe
 Releases are made from git tags of the form `vX.Y.Z` (e.g. `v1.2.0`), which are the single source of truth for the version:
 
 - The `version` in `package.json` is not used for releases and stays at `0.0.0`.
-- The container image is tagged with the version **without** the `v` prefix, i.e. `v1.2.0` is published as `docker.io/therealdeepsight/top-assist-frontend:1.2.0`.
+- The container image is tagged with the version **without** the `v` prefix, i.e. `v1.2.0` is published as `docker.io/inbap/top-assist-frontend:1.2.0`.
 
 To publish a release, tag the commit and push the tag:
 
@@ -122,7 +122,7 @@ docker buildx build -f Containerfile \
   --label org.opencontainers.image.revision="$(git rev-parse HEAD)" \
   --label org.opencontainers.image.source="https://git.uni-wuppertal.de/top-assist/frontend" \
   --output type=registry,rewrite-timestamp=true \
-  --tag docker.io/therealdeepsight/top-assist-frontend:"$VERSION" \
+  --tag docker.io/inbap/top-assist-frontend:"$VERSION" \
   .
 ```
 
