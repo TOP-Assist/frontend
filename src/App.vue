@@ -78,6 +78,17 @@ import AppFooter from '@/components/AppFooter.vue'
   width: 100%;
 }
 
+/* Let the assistant grow with stacked editors and expanded results. */
+.body:has(:deep(.assistant-workspace)),
+.container:has(:deep(.assistant-workspace)) {
+  min-height: 100vh;
+  height: auto;
+}
+
+.container:has(:deep(.assistant-workspace)) {
+  grid-template-rows: minmax(18vh, auto) minmax(60vh, auto) minmax(22vh, auto);
+}
+
 @media (max-width: 768px) {
   .main-section {
     flex-direction: column;
