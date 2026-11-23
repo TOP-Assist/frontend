@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { Extension } from '@tiptap/core'
-import { Plugin } from '@tiptap/pm/state'
+import { Plugin, Selection } from '@tiptap/pm/state'
 import katex from 'katex'
 
 const nonText = '\uFFFC'
@@ -17,7 +17,7 @@ export const DelimitedMath = Extension.create({
   addProseMirrorPlugins() {
     return [
       new Plugin({
-        appendTransaction(transactions, _, { doc, schema, tr }) {
+        appendTransaction(transactions, _, { doc, schema, selection, tr }) {
           if (!transactions.some(({ docChanged }) => docChanged)) return null
           if (!doc.textContent.includes('$')) return null
 
@@ -52,29 +52,42 @@ export const DelimitedMath = Extension.create({
             const last = blocks[blockIndex]!
             const from = start - first.offset
             const to = end - last.offset
-            const standalone =
-              doubleDollarLatex !== undefined &&
-              !first.text.slice(0, from).trim() &&
-              !last.text.slice(to).trim() &&
-              blocks.slice(firstIndex, blockIndex + 1).every(({ paragraph }) => paragraph)
+            const displayMode = doubleDollarLatex !== undefined
             const latex = (doubleDollarLatex ?? singleDollarLatex ?? '').trim()
-            if (!latex || (!standalone && (first !== last || latex.includes('\n')))) continue
+            if (!latex || (!displayMode && first !== last)) continue
+            if (
+              displayMode &&
+              first !== last &&
+              !blocks.slice(firstIndex, blockIndex + 1).every(({ paragraph }) => paragraph)
+            ) {
+              continue
+            }
 
             try {
               katex.renderToString(latex, {
                 trust: false,
                 throwOnError: true,
                 strict: 'ignore',
-                displayMode: standalone,
+                displayMode,
               })
             } catch {
               continue
             }
 
-            const type = standalone ? schema.nodes.blockMath! : schema.nodes.inlineMath!
-            const startPos = standalone ? first.pos : first.pos + 1 + from
-            const endPos = standalone ? last.pos + last.text.length + 2 : last.pos + 1 + to
+            const type = displayMode ? schema.nodes.blockMath! : schema.nodes.inlineMath!
+            const startsBlock = displayMode && first.paragraph && !first.text.slice(0, from).trim()
+            const endsBlock = displayMode && last.paragraph && !last.text.slice(to).trim()
+            const startPos = startsBlock ? first.pos : first.pos + 1 + from
+            const endPos = endsBlock ? last.pos + last.text.length + 2 : last.pos + 1 + to
             tr.replaceWith(tr.mapping.map(startPos), tr.mapping.map(endPos), type.create({ latex }))
+
+            if (displayMode && selection.empty && selection.from === last.pos + 1 + to) {
+              // Continue typing after the math block instead of replacing the selected node.
+              const after = tr.mapping.map(endPos)
+              if (after === tr.doc.content.size) tr.insert(after, schema.nodes.paragraph!.create())
+              const caret = Selection.findFrom(tr.doc.resolve(after), 1, true)
+              if (caret) tr.setSelection(caret)
+            }
           }
 
           return tr.docChanged ? tr : null

@@ -7,50 +7,85 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <template>
   <div class="editor" v-bind="$attrs" :class="{ readonly }" @click.self="focusEditor">
-    <div v-if="editor && !readonly" class="formatting" role="group" aria-label="Textformatierung">
-      <select aria-label="Absatzformat" :value="headingLevel" @change="setHeading">
-        <option value="0">Normaler Text</option>
-        <option v-for="level in headingLevels" :key="level" :value="level">H{{ level }}</option>
-      </select>
+    <div v-if="editor && !readonly" class="toolbar">
+      <fieldset class="formatting" :disabled="sourceMode" aria-label="Textformatierung">
+        <select aria-label="Absatzformat" :value="headingLevel" @change="setHeading">
+          <option value="0">Normaler Text</option>
+          <option v-for="level in headingLevels" :key="level" :value="level">H{{ level }}</option>
+        </select>
+        <button
+          type="button"
+          aria-label="Fett"
+          :aria-pressed="editor.isActive('bold')"
+          @mousedown.prevent
+          @click="editor.chain().focus().toggleBold().run()"
+        >
+          <strong>B</strong>
+        </button>
+        <button
+          type="button"
+          aria-label="Kursiv"
+          :aria-pressed="editor.isActive('italic')"
+          @mousedown.prevent
+          @click="editor.chain().focus().toggleItalic().run()"
+        >
+          <em>I</em>
+        </button>
+        <button
+          type="button"
+          aria-label="Unterstrichen"
+          :aria-pressed="editor.isActive('underline')"
+          @mousedown.prevent
+          @click="editor.chain().focus().toggleUnderline().run()"
+        >
+          <u>U</u>
+        </button>
+        <button type="button" @mousedown.prevent @click="openFormulaFromSelection">LaTeX</button>
+        <button type="button" disabled>Tabelle</button>
+        <button type="button" disabled>Bild</button>
+      </fieldset>
       <button
         type="button"
-        aria-label="Fett"
-        :aria-pressed="editor.isActive('bold')"
-        @mousedown.prevent
-        @click="editor.chain().focus().toggleBold().run()"
+        class="editor-mode"
+        aria-label="Source Mode"
+        title="Source Mode"
+        :aria-pressed="sourceMode"
+        @click="toggleSourceMode"
       >
-        <strong>B</strong>
+        <svg
+          aria-hidden="true"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.75"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M13 3H5v18h14V9z M13 3v6h6 M10 12l-2 2 2 2 M14 12l2 2-2 2" />
+        </svg>
       </button>
-      <button
-        type="button"
-        aria-label="Kursiv"
-        :aria-pressed="editor.isActive('italic')"
-        @mousedown.prevent
-        @click="editor.chain().focus().toggleItalic().run()"
-      >
-        <em>I</em>
-      </button>
-      <button
-        type="button"
-        aria-label="Unterstrichen"
-        :aria-pressed="editor.isActive('underline')"
-        @mousedown.prevent
-        @click="editor.chain().focus().toggleUnderline().run()"
-      >
-        <u>U</u>
-      </button>
-      <button type="button" @mousedown.prevent @click="openFormulaFromSelection">LaTeX</button>
-      <button type="button" disabled>Tabelle</button>
-      <button type="button" disabled>Bild</button>
     </div>
 
     <EditorContent
       v-if="editor"
+      v-show="!sourceMode"
       :editor="editor"
       class="editor-content"
       @click="closeContextMenu"
       @dblclick="handleDoubleClick"
     />
+
+    <textarea
+      v-if="!readonly"
+      v-show="sourceMode"
+      ref="sourceInput"
+      class="source-input"
+      aria-label="Markdown-Quelltext"
+      v-model="sourceText"
+      :placeholder="placeholder"
+    ></textarea>
 
     <div
       v-if="contextMenu"
@@ -113,7 +148,7 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import type { Barrier, ParlanceMatch } from '@/api'
-import { analysisSpan, documentRange, editorText, remapSpans } from './editorText'
+import { analysisSpan, documentRange, editorText, remapSpans, remapSourceSpans } from './editorText'
 import { DelimitedMath } from './delimitedMath'
 
 import { operatorMatchLabels, type OperatorHighlight } from '@/operatorHighlights'
@@ -158,6 +193,9 @@ const contextMenu = ref<{
 } | null>(null)
 
 const headingLevels = [1, 2, 3] as const
+const sourceMode = ref(false)
+const sourceInput = ref<HTMLTextAreaElement | null>(null)
+const sourceText = computed({ get: () => props.modelValue, set: updateSource })
 const headingLevel = computed(
   () => headingLevels.find((level) => editor.value?.isActive('heading', { level })) ?? 0,
 )
@@ -287,7 +325,7 @@ const editor = useEditor({
     if (!props.readonly) emit('update:analysisText', editorText(editor.state.doc).text)
   },
   onUpdate: ({ editor, transaction, appendedTransactions }) => {
-    if (props.readonly) return
+    if (props.readonly || sourceMode.value) return
 
     const { doc } = editor.state
     const transactions = [transaction, ...appendedTransactions]
@@ -303,19 +341,34 @@ const editor = useEditor({
   },
 })
 
-watch(
-  () => props.modelValue,
-  (value) => {
-    if (!editor.value || value === lastValue) return
-    lastValue = value
-    editor.value.commands.setContent(props.readonly ? textToHtml(value) : value, {
-      contentType: props.readonly ? 'html' : 'markdown',
-      emitUpdate: false,
-    })
-    closeContextMenu()
-    if (!props.readonly) emit('update:analysisText', editorText(editor.value.state.doc).text)
-  },
-)
+watch(() => props.modelValue, replaceContent)
+
+function replaceContent(value: string) {
+  const instance = editor.value
+  if (!instance || value === lastValue) return
+  lastValue = value
+  instance.commands.setContent(props.readonly ? textToHtml(value) : value, {
+    contentType: props.readonly ? 'html' : 'markdown',
+    emitUpdate: false,
+  })
+  closeContextMenu()
+  if (!props.readonly) emit('update:analysisText', editorText(instance.state.doc).text)
+}
+
+function updateSource(value: string) {
+  const instance = editor.value
+  if (!instance || value === lastValue) return
+
+  const before = instance.state.doc
+  replaceContent(value)
+  const after = instance.state.doc
+  emit('update:modelValue', value)
+  if (props.barriers.length)
+    emit('update:barriers', remapSourceSpans(props.barriers, before, after))
+  if (props.parlance_words.length) {
+    emit('update:parlance_words', remapSourceSpans(props.parlance_words, before, after))
+  }
+}
 
 watch(
   () => props.readonly,
@@ -446,7 +499,13 @@ function onFormulaDialogClose() {
 
 function focusEditor() {
   closeContextMenu()
-  if (!props.readonly) editor.value?.commands.focus()
+  if (sourceMode.value) sourceInput.value?.focus()
+  else if (!props.readonly) editor.value?.commands.focus()
+}
+
+function toggleSourceMode() {
+  closeContextMenu()
+  sourceMode.value = !sourceMode.value
 }
 
 function handleDoubleClick(event: MouseEvent) {
@@ -515,17 +574,36 @@ function closeContextMenu() {
   overflow: auto;
 }
 
-.formatting {
+.toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
+  flex-flow: row-reverse wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
   padding: 0.25rem 0 0.5rem;
   margin-bottom: 0.4rem;
   border-bottom: 1px solid #ddd;
 }
 
-.formatting button,
-.formatting select,
+.formatting {
+  display: flex;
+  flex: 1 1 8rem;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.editor-mode {
+  order: -1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.toolbar button,
+.toolbar select,
 .formula-actions button {
   padding: 0.25rem 0.5rem;
   border: 1px solid #aaa;
@@ -536,16 +614,33 @@ function closeContextMenu() {
   font-size: 0.875rem;
 }
 
-.formatting button[aria-pressed='true'],
+.toolbar button[aria-pressed='true'],
 .formula-actions button[type='submit'] {
   border-color: #467a60;
   background: #deeee6;
 }
 
-.formatting button:disabled {
+.formatting button:disabled,
+.formatting select:disabled {
   border-color: #ddd;
   background: #f5f5f5;
   color: #777;
+}
+
+.source-input {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  padding: 0;
+  resize: none;
+  font: inherit;
+  font-family: monospace;
+  tab-size: inherit;
+}
+
+.source-input:focus-visible {
+  outline: 2px solid #589b79;
+  outline-offset: -2px;
 }
 
 .formula-dialog {

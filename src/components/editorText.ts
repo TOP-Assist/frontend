@@ -92,3 +92,33 @@ export function remapSpans<T extends TextSpan>(
     return mapped?.token === span.token ? [{ ...span, ...mapped }] : []
   })
 }
+
+export function remapSourceSpans<T extends TextSpan>(
+  spans: T[],
+  before: ProseMirrorNode,
+  after: ProseMirrorNode,
+) {
+  const previous = editorText(before).characters
+  const current = editorText(after).characters
+  const sharedLength = Math.min(previous.length, current.length)
+
+  // Source edits reparse the document, so map the unchanged prefix and suffix of its analysis text.
+  let prefix = 0
+  while (prefix < sharedLength && previous[prefix] === current[prefix]) prefix++
+  let suffix = 0
+  while (
+    suffix < sharedLength - prefix &&
+    previous[previous.length - 1 - suffix] === current[current.length - 1 - suffix]
+  ) {
+    suffix++
+  }
+
+  const offset = current.length - previous.length
+  return spans.flatMap((span) => {
+    if (!documentRange(before, span)) return []
+    if (span.end <= prefix) return documentRange(after, span) ? [span] : []
+    if (span.start < previous.length - suffix) return []
+    const shifted = { ...span, start: span.start + offset, end: span.end + offset }
+    return documentRange(after, shifted) ? [shifted] : []
+  })
+}

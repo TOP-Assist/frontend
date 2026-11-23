@@ -513,9 +513,14 @@ function on_copy() {
     margin-top: 20px;
   }
 }
+
 .textarea-container {
   position: relative;
   width: 100%;
+}
+
+.source-editor .textarea {
+  padding-right: max(4vh, calc(2vh + 22px));
 }
 .domain-selector-container {
   display: flex;
