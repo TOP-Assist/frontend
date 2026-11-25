@@ -6,27 +6,45 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { fetchOperatorDefinitions, type Barrier, type OperatorAnalysis } from '@/api'
+import { computed, ref, watch } from 'vue'
+import {
+  fetchOperatorDefinitions,
+  type Barrier,
+  type OperatorAnalysis,
+  type OperatorDefinition,
+} from '@/api'
 import BarrierInfo from './BarrierInfo.vue'
 
 const tabs = ['Barrieren', 'Operatoren'] as const
 type Tab = (typeof tabs)[number]
 const tab = defineModel<Tab>('tab', { required: true })
-defineProps<{
+const props = defineProps<{
   barriers: Barrier[]
   analysis?: OperatorAnalysis
   status: 'idle' | 'loading' | 'ready' | 'error'
 }>()
 
-const definitions = ref<Map<string, string>>()
+const definitions = ref<Map<string, OperatorDefinition>>()
+const operatorRows = computed(() => {
+  const analysis = props.analysis
+  return analysis?.operators.map((operator, index) => {
+    const lemma = analysis.operators_lemmatized?.[index] ?? operator
+    const entry = definitions.value?.get(lemma.toLowerCase())
+    const name = entry?.operator ?? lemma
+    return {
+      title: name.charAt(0).toUpperCase() + name.slice(1),
+      textForm: analysis.occurrences?.[index]?.token ?? operator,
+      definition: entry?.definition,
+    }
+  })
+})
 const catalogStatus = ref<'idle' | 'loading' | 'error' | 'ready'>('idle')
 async function loadDefinitions() {
   if (catalogStatus.value === 'loading' || definitions.value) return
   catalogStatus.value = 'loading'
   try {
     const entries = await fetchOperatorDefinitions()
-    definitions.value = new Map(entries.map(({ operator, definition }) => [operator, definition]))
+    definitions.value = new Map(entries.map((entry) => [entry.operator.toLowerCase(), entry]))
     catalogStatus.value = 'ready'
   } catch {
     catalogStatus.value = 'error'
@@ -103,10 +121,12 @@ function navigate(event: KeyboardEvent) {
           </p>
         </template>
       </div>
-      <dl v-if="analysis?.operators.length">
-        <template v-for="(lemma, index) in analysis.operators" :key="index">
-          <dt>{{ analysis.occurrences?.[index]?.token ?? lemma }}</dt>
-          <dd v-if="definitions">{{ definitions.get(lemma) ?? 'Definition nicht verfügbar' }}</dd>
+      <dl v-if="operatorRows?.length">
+        <template v-for="(row, index) in operatorRows" :key="index">
+          <dt>
+            <strong>{{ row.title }}</strong> <span class="text-form">(<em>„{{ row.textForm }}“</em>)</span>
+          </dt>
+          <dd v-if="definitions">{{ row.definition ?? 'Definition nicht verfügbar' }}</dd>
         </template>
       </dl>
     </div>
@@ -149,8 +169,8 @@ dl,
 p {
   margin: 0 0 0.75rem;
 }
-dt {
-  font-weight: bold;
+.text-form {
+  color: #505050;
 }
 dd {
   margin: 0.25rem 0 0.75rem;

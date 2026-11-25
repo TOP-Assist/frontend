@@ -52,20 +52,22 @@ const comparisonStatus = ref<'loading' | 'ready' | 'error'>()
 let analysisRequest = 0
 let translationRequest = 0
 
-const comparisonMeta = computed(() => comparison.value?.operator_consistency_with_order?.meta)
+const comparisonMeta = computed(
+  () => comparison.value?.operator_consistency_deterministic_with_order?.meta,
+)
 const comparedOperators = computed(() => {
   const meta = comparisonMeta.value
   if (!meta) return
   return {
     input: compareOperatorPositions(
       meta.input_occurrences,
-      meta.input_operators,
-      meta.output_operators,
+      meta.input_operators_lemmatized,
+      meta.output_operators_lemmatized,
     ),
     output: compareOperatorPositions(
       meta.output_occurrences,
-      meta.output_operators,
-      meta.input_operators,
+      meta.output_operators_lemmatized,
+      meta.input_operators_lemmatized,
     ),
   }
 })
@@ -172,7 +174,10 @@ async function compareOperators(input: string, output: string, request: number) 
   try {
     const { results } = await validateTranslation(input, output)
     if (request !== translationRequest) return
-    if (!results.operator_consistency_with_order || !results.operator_consistency_without_order) {
+    if (
+      !results.operator_consistency_deterministic_with_order ||
+      !results.operator_consistency_deterministic_without_order
+    ) {
       comparisonStatus.value = 'error'
       return
     }

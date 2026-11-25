@@ -82,6 +82,7 @@ export interface OperatorDefinition {
 
 export interface OperatorAnalysis {
   operators: string[]
+  operators_lemmatized?: string[]
   occurrences?: OperatorOccurrence[]
 }
 
@@ -90,6 +91,8 @@ interface OperatorMetric {
   meta: {
     input_operators: string[]
     output_operators: string[]
+    input_operators_lemmatized: string[]
+    output_operators_lemmatized: string[]
     input_occurrences?: OperatorOccurrence[]
     output_occurrences?: OperatorOccurrence[]
   }
@@ -97,7 +100,7 @@ interface OperatorMetric {
 
 export interface ValidationResult {
   results: {
-    operator_consistency_with_order?: OperatorMetric
-    operator_consistency_without_order?: OperatorMetric
+    operator_consistency_deterministic_with_order?: OperatorMetric
+    operator_consistency_deterministic_without_order?: OperatorMetric
   }
 }

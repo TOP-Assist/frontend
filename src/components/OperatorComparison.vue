@@ -15,8 +15,8 @@ const props = defineProps<{
   results?: ValidationResult['results']
 }>()
 
-const ordered = computed(() => props.results?.operator_consistency_with_order)
-const unordered = computed(() => props.results?.operator_consistency_without_order)
+const ordered = computed(() => props.results?.operator_consistency_deterministic_with_order)
+const unordered = computed(() => props.results?.operator_consistency_deterministic_without_order)
 const percent = new Intl.NumberFormat('de-DE', { style: 'percent', maximumFractionDigits: 1 })
 </script>
 
