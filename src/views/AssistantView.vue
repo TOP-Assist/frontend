@@ -6,9 +6,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import {
   analyzeText,
+  analyzeOperators,
+  validateTranslation,
+  type OperatorAnalysis,
+  type ValidationResult,
   fetchBarrierDefinitions,
   fetchParlanceWords,
   submitFeedback,
@@ -20,9 +24,11 @@ import {
   type ParlanceMatch,
   type ParlanceWord,
 } from '@/api'
+import { compareOperatorPositions } from '@/operatorHighlights'
 import FeedbackModal from '@/components/FeedbackModal.vue'
+import OperatorComparison from '@/components/OperatorComparison.vue'
 import RichTextarea from '@/components/RichTextarea.vue'
-import BarrierInfo from '@/components/BarrierInfo.vue'
+import AnalysisResults from '@/components/AnalysisResults.vue'
 import DomainSelector from '@/components/DomainSelector.vue'
 import QueueOverlay from '@/components/QueueOverlay.vue'
 
@@ -38,8 +44,53 @@ watch(selectedDomain, (val) => {
 })
 
 const wait_res = ref(false)
-const score_src = ref(' ')
-const score_target = ref(' ')
+const operatorAnalysis = ref<OperatorAnalysis>()
+const analysisTab = ref<'Barrieren' | 'Operatoren'>('Barrieren')
+const operatorStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const comparison = ref<ValidationResult['results']>()
+const comparisonStatus = ref<'loading' | 'ready' | 'error'>()
+let analysisRequest = 0
+let translationRequest = 0
+
+const comparisonMeta = computed(
+  () => comparison.value?.operator_consistency_deterministic_with_order?.meta,
+)
+const comparedOperators = computed(() => {
+  const meta = comparisonMeta.value
+  if (!meta) return
+  return {
+    input: compareOperatorPositions(
+      meta.input_occurrences,
+      meta.input_operators_lemmatized,
+      meta.output_operators_lemmatized,
+    ),
+    output: compareOperatorPositions(
+      meta.output_occurrences,
+      meta.output_operators_lemmatized,
+      meta.input_operators_lemmatized,
+    ),
+  }
+})
+const sourceOperators = computed(() =>
+  translation_mode.value && comparisonMeta.value
+    ? comparedOperators.value?.input
+    : operatorAnalysis.value?.occurrences,
+)
+
+watch(
+  src_text,
+  () => {
+    analysisRequest++
+    translationRequest++
+    operatorAnalysis.value = undefined
+    operatorStatus.value = 'idle'
+    comparison.value = undefined
+    comparisonStatus.value = undefined
+    src_text_cached.value = ''
+    wait_res.value = false
+  },
+  { flush: 'sync' },
+)
 const show_feedback_modal = ref(false)
 const show_barrier_lexikon_modal = ref(false)
 const strategy = ref('default')
@@ -85,8 +136,7 @@ function reset_values() {
   src_text.value = ''
   src_text_cached.value = ''
   target_text.value = ''
-  score_src.value = ' '
-  score_target.value = ' '
+  parlance_words.value = []
   barriers.value = []
 }
 
@@ -94,40 +144,76 @@ async function translate() {
   if (!src_text.value.trim() || src_text.value === src_text_cached.value) {
     return
   }
+  const input = src_text.value
+  const request = ++translationRequest
   target_text.value = ''
   wait_res.value = true
   try {
     const result = await translateText({
-      text: src_text.value,
+      text: input,
       strategy: strategy.value,
       barriers: barriers.value,
       parlance_words: parlance_words.value.map((word) => word.token),
     })
+    if (request !== translationRequest) return
     target_text.value = `${result.title}\n\n${result.optimized}`
     strategy.value = result.strategy_used
 
-    src_text_cached.value = src_text.value
+    src_text_cached.value = input
+    void compareOperators(input, target_text.value, request)
   } catch {
+    if (request !== translationRequest) return
     target_text.value = 'Ups! Etwas ist schiefgelaufen. Bitte versuchen Sie es später erneut.'
   } finally {
-    wait_res.value = false
+    if (request === translationRequest) wait_res.value = false
   }
 }
 
-async function analize_src() {
-  if (src_text.value) {
-    wait_res.value = true
-    try {
-      const answer = await analyzeText(src_text.value, all_parlance_words.value)
-      barriers.value = answer.barriers ?? []
-      parlance_words.value = answer.parlance ?? []
-    } catch (error) {
-      console.error('API Fehler:', error)
+async function compareOperators(input: string, output: string, request: number) {
+  comparisonStatus.value = 'loading'
+  try {
+    const { results } = await validateTranslation(input, output)
+    if (request !== translationRequest) return
+    if (
+      !results.operator_consistency_deterministic_with_order ||
+      !results.operator_consistency_deterministic_without_order
+    ) {
+      comparisonStatus.value = 'error'
+      return
     }
-  } else {
-    barriers.value = []
+    comparison.value = results
+    comparisonStatus.value = 'ready'
+  } catch {
+    if (request === translationRequest) comparisonStatus.value = 'error'
   }
-  wait_res.value = false
+}
+
+async function analyzeSourceOperators(input: string, request: number) {
+  try {
+    const result = await analyzeOperators(input)
+    if (request !== analysisRequest) return
+    operatorAnalysis.value = result
+    operatorStatus.value = 'ready'
+  } catch {
+    if (request === analysisRequest) operatorStatus.value = 'error'
+  }
+}
+
+async function analyzeSource() {
+  const input = src_text.value
+  if (!input.trim()) return
+  const request = ++analysisRequest
+  operatorAnalysis.value = undefined
+  operatorStatus.value = 'loading'
+  void analyzeSourceOperators(input, request)
+  try {
+    const answer = await analyzeText(input, all_parlance_words.value)
+    if (request !== analysisRequest) return
+    barriers.value = answer.barriers ?? []
+    parlance_words.value = answer.parlance ?? []
+  } catch (error) {
+    console.error('API Fehler:', error)
+  }
 }
 
 async function get_parlance_words() {
@@ -189,7 +275,8 @@ function on_translate() {
 }
 
 function on_analyze() {
-  analize_src()
+  analysisTab.value = 'Barrieren'
+  analyzeSource()
   translation_mode.value = false
   tooltip_disabled.value = true
 }
@@ -206,15 +293,18 @@ function on_copy() {
 </script>
 
 <template>
-  <!-- Left side: Text field and Optimieren button -->
-  <div class="content-box">
+  <div class="assistant-workspace">
     <div class="domain-selector-container">
       <DomainSelector v-model="selectedDomain" />
     </div>
-    <div class="textarea-container">
+    <div class="textarea-container source-editor">
       <RichTextarea
         class="textarea"
         v-model="src_text"
+        :highlight-mode="
+          translation_mode ? 'all' : analysisTab === 'Barrieren' ? 'barriers' : 'operators'
+        "
+        :operators="sourceOperators"
         v-model:barriers="barriers"
         v-model:parlance_words="parlance_words"
         placeholder="Prüfungsaufgabe hier eingeben oder einfügen"
@@ -245,77 +335,86 @@ function on_copy() {
       >
         Analysieren
         <span v-if="!tooltip_disabled" class="tooltip-text">
-          Analysiere den Text auf Sprachbarrieren.
+          Analysiere den Text auf Sprachbarrieren und Operatoren.
         </span>
       </button>
     </div>
-  </div>
 
-  <!-- Right side: Translated text and icons -->
-  <div v-if="translation_mode" class="content-box right-box">
-    <RichTextarea class="textarea" id="right-box" readonly v-model="target_text" />
-    <div v-if="wait_res" class="skeleton">
-      <div class="skeleton-text shimmer"></div>
-      <div class="skeleton-text shimmer"></div>
-      <div class="skeleton-text shimmer"></div>
-      <div class="skeleton-text shimmer"></div>
-      <div class="skeleton-text short shimmer"></div>
-      <QueueOverlay
-        :wait-res="wait_res"
-        :delay-ms="8000"
-        theme="light"
-        :closable="false"
-        :close-on-backdrop="false"
+    <!-- Right side: Translated text and icons -->
+    <div v-if="translation_mode" class="textarea-container result-pane">
+      <RichTextarea
+        class="textarea"
+        id="right-box"
+        readonly
+        v-model="target_text"
+        :operators="comparedOperators?.output"
       />
+      <div v-if="wait_res" class="skeleton">
+        <div class="skeleton-text shimmer"></div>
+        <div class="skeleton-text shimmer"></div>
+        <div class="skeleton-text shimmer"></div>
+        <div class="skeleton-text shimmer"></div>
+        <div class="skeleton-text short shimmer"></div>
+        <QueueOverlay
+          :wait-res="wait_res"
+          :delay-ms="8000"
+          theme="light"
+          :closable="false"
+          :close-on-backdrop="false"
+        />
+      </div>
+      <div class="icons">
+        <button
+          class="icon-btn"
+          v-if="target_text"
+          @click="open_feedback_modal"
+          @mouseleave="tooltip_disabled = false"
+          @focus="tooltip_disabled = false"
+          @blur="tooltip_disabled = false"
+        >
+          <img src="@/assets/icons/rate.png" alt="Rate" />
+          <span v-if="!tooltip_disabled" class="tooltip-text">Bewerten Sie das Ergebnis.</span>
+        </button>
+        <button
+          class="icon-btn"
+          v-if="target_text"
+          @click="on_copy"
+          @mouseleave="tooltip_disabled = false"
+          @focus="tooltip_disabled = false"
+          @blur="tooltip_disabled = false"
+        >
+          <img src="@/assets/icons/copy.png" alt="Copy" />
+          <span v-if="!tooltip_disabled" class="tooltip-text">Kopieren Sie das Ergebnis.</span>
+          <span v-if="copy_success_message" class="tooltip-text">Erfolgreich kopiert!</span>
+        </button>
+      </div>
     </div>
-    <div class="icons">
-      <button
-        class="icon-btn"
-        v-if="target_text"
-        @click="open_feedback_modal"
-        @mouseleave="tooltip_disabled = false"
-        @focus="tooltip_disabled = false"
-        @blur="tooltip_disabled = false"
-      >
-        <img src="@/assets/icons/rate.png" alt="Rate" />
-        <span v-if="!tooltip_disabled" class="tooltip-text">Bewerten Sie das Ergebnis.</span>
-      </button>
-      <button
-        class="icon-btn"
-        v-if="target_text"
-        @click="on_copy"
-        @mouseleave="tooltip_disabled = false"
-        @focus="tooltip_disabled = false"
-        @blur="tooltip_disabled = false"
-      >
-        <img src="@/assets/icons/copy.png" alt="Copy" />
-        <span v-if="!tooltip_disabled" class="tooltip-text">Kopieren Sie das Ergebnis.</span>
-        <span v-if="copy_success_message" class="tooltip-text">Erfolgreich kopiert!</span>
-      </button>
-    </div>
-  </div>
-  <div v-else class="content-box right-box">
-    <BarrierInfo class="textarea" id="right-box" :barriers="barriers" />
-    <div class="icons">
-      <button
-        class="icon-btn"
-        @click="open_feedback_modal"
-        @mouseleave="tooltip_disabled = false"
-        @focus="tooltip_disabled = false"
-        @blur="tooltip_disabled = false"
-      >
-        <img src="@/assets/icons/rate.png" alt="Rate" />
-        <span v-if="!tooltip_disabled" class="tooltip-text">Bewerten Sie die Analyse.</span>
-      </button>
-      <!-- <button class="icon-btn" 
-                @click="show_barrier_lexikon_modal = true; tooltip_disabled = true"
-                @mouseleave="tooltip_disabled = false"
-                @focus="tooltip_disabled = false"
-                @blur="tooltip_disabled = false">
-                    <img src="@/assets/icons/lexikon.png" alt="Barrier Lexikon">
-                    <span v-if="!tooltip_disabled" class="tooltip-text">Zum Barriere-Lexikon</span>
-                </button> -->
-    </div>
+    <OperatorComparison
+      v-if="translation_mode && comparisonStatus"
+      :status="comparisonStatus"
+      :results="comparison"
+    />
+    <AnalysisResults
+      v-show="!translation_mode"
+      v-model:tab="analysisTab"
+      class="textarea result-pane"
+      :barriers="barriers"
+      :analysis="operatorAnalysis"
+      :status="operatorStatus"
+    >
+      <div class="icons">
+        <button
+          class="icon-btn"
+          @click="open_feedback_modal"
+          @mouseleave="tooltip_disabled = false"
+          @focus="tooltip_disabled = false"
+          @blur="tooltip_disabled = false"
+        >
+          <img src="@/assets/icons/rate.png" alt="Rate" />
+          <span v-if="!tooltip_disabled" class="tooltip-text">Bewerten Sie die Analyse.</span>
+        </button>
+      </div>
+    </AnalysisResults>
   </div>
 
   <transition name="fade">
@@ -373,13 +472,42 @@ function on_copy() {
   /*padding: 20px; /* Padding inside the modal */
 }
 /* style for Survey End*/
-.content-box {
-  display: flex;
+.assistant-workspace {
+  --panel-radius: 15px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    'domain .'
+    'source result'
+    'actions comparison';
+  column-gap: 20px;
+  align-items: start;
+  width: 100%;
+}
+.domain-selector-container {
+  grid-area: domain;
+}
+.source-editor {
+  grid-area: source;
+}
+.result-pane {
+  grid-area: result;
+}
+.btns-container {
+  grid-area: actions;
+}
+.assistant-workspace > .comparison {
+  grid-area: comparison;
+}
 
-  flex-direction: column;
-  /* justify-content: space-between; */
-  width: 49%;
-  border-radius: 5px;
+@media (max-width: 768px) {
+  .assistant-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'domain' 'source' 'actions' 'result' 'comparison';
+  }
+  .result-pane {
+    margin-top: 20px;
+  }
 }
 .textarea-container {
   position: relative;
@@ -464,7 +592,7 @@ function on_copy() {
   letter-spacing: normal;
   font-variant-ligatures: none;
   tab-size: 2;
-  border-radius: 15px;
+  border-radius: var(--panel-radius);
   box-sizing: border-box;
   resize: none !important;
 }
@@ -514,10 +642,6 @@ textarea:hover {
   transform: translateY(-1px);
 }
 
-.right-box {
-  margin-top: -10px;
-  position: relative;
-}
 #right-box {
   background-color: rgb(231, 228, 228);
   border: none;

@@ -47,6 +47,8 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { Barrier, ParlanceMatch } from '@/api'
 
+import { operatorMatchLabels, type OperatorHighlight } from '@/operatorHighlights'
+
 defineOptions({
   inheritAttrs: false,
 })
@@ -56,6 +58,8 @@ const props = withDefaults(
     modelValue?: string
     readonly?: boolean
     barriers?: Barrier[]
+    highlightMode?: 'all' | 'barriers' | 'operators'
+    operators?: OperatorHighlight[]
     placeholder?: string
     parlance_words?: ParlanceMatch[]
   }>(),
@@ -63,6 +67,8 @@ const props = withDefaults(
     modelValue: '',
     readonly: false,
     barriers: () => [],
+    highlightMode: 'all',
+    operators: () => [],
     placeholder: '',
     parlance_words: () => [],
   },
@@ -189,7 +195,7 @@ const barrierHighlight = Extension.create({
       new Plugin({
         props: {
           decorations: (state) => {
-            if (!groupedBarriers.value.length) return null
+            if (props.highlightMode === 'operators' || !groupedBarriers.value.length) return null
 
             const decorations = groupedBarriers.value
               .map((barrier) => {
@@ -218,7 +224,7 @@ const parlanceWordHighlight = Extension.create({
       new Plugin({
         props: {
           decorations: (state) => {
-            if (!groupedParlanceWords.value.length) return null
+            if (props.highlightMode !== 'all' || !groupedParlanceWords.value.length) return null
 
             const decorations = groupedParlanceWords.value
               .map((word) => {
@@ -240,8 +246,53 @@ const parlanceWordHighlight = Extension.create({
   },
 })
 
+const operatorHighlight = Extension.create({
+  name: 'operatorHighlight',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          decorations({ doc }) {
+            if (props.highlightMode === 'barriers' || !props.operators.length) return null
+
+            // Our plain-text editor represents a hard break as one newline and a
+            // paragraph boundary as two. Both occupy the same width in the document.
+            // Text starts at position 1 and ProseMirror counts UTF-16 code units.
+            const positions = [1]
+            let position = 1
+            for (const character of props.modelValue) {
+              position += character.length
+              positions.push(position)
+            }
+
+            const marks = []
+            for (const { start, end, token, match } of props.operators) {
+              const from = positions[start]
+              const to = positions[end]
+              if (from === undefined || to === undefined || from >= to || to > doc.content.size)
+                continue
+              if (doc.textBetween(from, to) === token) {
+                const attributes = match
+                  ? {
+                      class: 'operator-highlight',
+                      'data-match': match,
+                      title: operatorMatchLabels[match],
+                    }
+                  : { class: 'operator-highlight' }
+                marks.push(Decoration.inline(from, to, attributes))
+              }
+            }
+            return DecorationSet.create(doc, marks)
+          },
+        },
+      }),
+    ]
+  },
+})
+
 const editor = useEditor({
   content: textToHtml(props.modelValue || ''),
+  parseOptions: { preserveWhitespace: 'full' },
   editable: !props.readonly,
   extensions: [
     StarterKit.configure({
@@ -265,6 +316,7 @@ const editor = useEditor({
     }),
     barrierHighlight,
     parlanceWordHighlight,
+    operatorHighlight,
   ],
   onUpdate: ({ editor }) => {
     if (props.readonly || isSettingContent.value) return
@@ -340,7 +392,10 @@ watch(
     if (editor.value.getText() === text) return
     isSettingContent.value = true
     const htmlContent = textToHtml(text)
-    editor.value.commands.setContent(htmlContent, { emitUpdate: false })
+    editor.value.commands.setContent(htmlContent, {
+      emitUpdate: false,
+      parseOptions: { preserveWhitespace: 'full' },
+    })
     lastText.value = text
     isSettingContent.value = false
   },
@@ -355,16 +410,12 @@ watch(
 )
 
 watch(
-  () => props.barriers,
-  () => {
-    if (!editor.value) return
-    editor.value.view.dispatch(editor.value.state.tr)
-  },
-  { deep: true },
-)
-
-watch(
-  () => props.parlance_words,
+  [
+    () => props.highlightMode,
+    () => props.barriers,
+    () => props.parlance_words,
+    () => props.operators,
+  ],
   () => {
     if (!editor.value) return
     editor.value.view.dispatch(editor.value.state.tr)

@@ -67,3 +67,40 @@ export interface FeedbackRequest {
     barriers: string[]
   }
 }
+
+/** Surface token with Unicode code-point offsets [start, end) in the submitted text. */
+export interface OperatorOccurrence {
+  token: string
+  start: number
+  end: number
+}
+
+export interface OperatorDefinition {
+  operator: string
+  definition: string
+}
+
+export interface OperatorAnalysis {
+  operators: string[]
+  operators_lemmatized?: string[]
+  occurrences?: OperatorOccurrence[]
+}
+
+interface OperatorMetric {
+  score: number
+  meta: {
+    input_operators: string[]
+    output_operators: string[]
+    input_operators_lemmatized: string[]
+    output_operators_lemmatized: string[]
+    input_occurrences?: OperatorOccurrence[]
+    output_occurrences?: OperatorOccurrence[]
+  }
+}
+
+export interface ValidationResult {
+  results: {
+    operator_consistency_deterministic_with_order?: OperatorMetric
+    operator_consistency_deterministic_without_order?: OperatorMetric
+  }
+}
