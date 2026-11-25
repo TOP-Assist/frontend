@@ -29,10 +29,13 @@ import FeedbackModal from '@/components/FeedbackModal.vue'
 import OperatorComparison from '@/components/OperatorComparison.vue'
 import RichTextarea from '@/components/RichTextarea.vue'
 import AnalysisResults from '@/components/AnalysisResults.vue'
+import TranslationResult from '@/components/TranslationResult.vue'
+import { translationDocument } from '@/components/translationMarkdown'
 import DomainSelector from '@/components/DomainSelector.vue'
 import QueueOverlay from '@/components/QueueOverlay.vue'
 
 const src_text = ref<string>('')
+const src_analysis_text = ref('')
 const src_text_cached = ref<string>('')
 const target_text = ref('')
 const translation_mode = ref(true)
@@ -71,6 +74,9 @@ const comparedOperators = computed(() => {
     ),
   }
 })
+const renderedTranslation = computed(() =>
+  translationDocument(target_text.value, comparedOperators.value?.output),
+)
 const sourceOperators = computed(() =>
   translation_mode.value && comparisonMeta.value
     ? comparedOperators.value?.input
@@ -134,6 +140,7 @@ function store_feedback(feedbackData: Feedback) {
 
 function reset_values() {
   src_text.value = ''
+  src_analysis_text.value = ''
   src_text_cached.value = ''
   target_text.value = ''
   parlance_words.value = []
@@ -141,10 +148,10 @@ function reset_values() {
 }
 
 async function translate() {
-  if (!src_text.value.trim() || src_text.value === src_text_cached.value) {
+  const input = src_text.value
+  if (!input.trim() || input === src_text_cached.value) {
     return
   }
-  const input = src_text.value
   const request = ++translationRequest
   target_text.value = ''
   wait_res.value = true
@@ -160,7 +167,7 @@ async function translate() {
     strategy.value = result.strategy_used
 
     src_text_cached.value = input
-    void compareOperators(input, target_text.value, request)
+    void compareOperators(src_analysis_text.value, renderedTranslation.value.text, request)
   } catch {
     if (request !== translationRequest) return
     target_text.value = 'Ups! Etwas ist schiefgelaufen. Bitte versuchen Sie es später erneut.'
@@ -200,7 +207,7 @@ async function analyzeSourceOperators(input: string, request: number) {
 }
 
 async function analyzeSource() {
-  const input = src_text.value
+  const input = src_analysis_text.value
   if (!input.trim()) return
   const request = ++analysisRequest
   operatorAnalysis.value = undefined
@@ -305,6 +312,7 @@ function on_copy() {
           translation_mode ? 'all' : analysisTab === 'Barrieren' ? 'barriers' : 'operators'
         "
         :operators="sourceOperators"
+        v-model:analysis-text="src_analysis_text"
         v-model:barriers="barriers"
         v-model:parlance_words="parlance_words"
         placeholder="Prüfungsaufgabe hier eingeben oder einfügen"
@@ -324,14 +332,16 @@ function on_copy() {
     </div>
 
     <div class="btns-container">
-      <button class="optimieren-btn" @click="on_translate" :disabled="!src_text">Optimieren</button>
+      <button class="optimieren-btn" @click="on_translate" :disabled="!src_text.trim()">
+        Optimieren
+      </button>
       <button
         class="optimieren-btn barriere"
         @click="on_analyze"
         @mouseleave="tooltip_disabled = false"
         @focus="tooltip_disabled = false"
         @blur="tooltip_disabled = false"
-        :disabled="!src_text"
+        :disabled="!src_analysis_text.trim()"
       >
         Analysieren
         <span v-if="!tooltip_disabled" class="tooltip-text">
@@ -342,13 +352,7 @@ function on_copy() {
 
     <!-- Right side: Translated text and icons -->
     <div v-if="translation_mode" class="textarea-container result-pane">
-      <RichTextarea
-        class="textarea"
-        id="right-box"
-        readonly
-        v-model="target_text"
-        :operators="comparedOperators?.output"
-      />
+      <TranslationResult class="textarea" id="right-box" :html="renderedTranslation.html" />
       <div v-if="wait_res" class="skeleton">
         <div class="skeleton-text shimmer"></div>
         <div class="skeleton-text shimmer"></div>
@@ -509,9 +513,14 @@ function on_copy() {
     margin-top: 20px;
   }
 }
+
 .textarea-container {
   position: relative;
   width: 100%;
+}
+
+.source-editor .textarea {
+  padding-right: max(4vh, calc(2vh + 22px));
 }
 .domain-selector-container {
   display: flex;

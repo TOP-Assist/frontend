@@ -6,46 +6,150 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 <template>
-  <div
-    class="editor"
-    v-bind="$attrs"
-    :class="{ readonly }"
-    @click="focusEditor"
-    @dblclick="handleDoubleClick"
-  >
-    <EditorContent v-if="editor" :editor="editor" class="editor-content" />
+  <div class="editor" v-bind="$attrs" :class="{ readonly }" @click.self="focusEditor">
+    <div v-if="editor && !readonly" class="toolbar">
+      <fieldset class="formatting" :disabled="sourceMode" aria-label="Textformatierung">
+        <select aria-label="Absatzformat" :value="headingLevel" @change="setHeading">
+          <option value="0">Normaler Text</option>
+          <option v-for="level in headingLevels" :key="level" :value="level">H{{ level }}</option>
+        </select>
+        <button
+          type="button"
+          aria-label="Fett"
+          :aria-pressed="editor.isActive('bold')"
+          @mousedown.prevent
+          @click="editor.chain().focus().toggleBold().run()"
+        >
+          <strong>B</strong>
+        </button>
+        <button
+          type="button"
+          aria-label="Kursiv"
+          :aria-pressed="editor.isActive('italic')"
+          @mousedown.prevent
+          @click="editor.chain().focus().toggleItalic().run()"
+        >
+          <em>I</em>
+        </button>
+        <button
+          type="button"
+          aria-label="Unterstrichen"
+          :aria-pressed="editor.isActive('underline')"
+          @mousedown.prevent
+          @click="editor.chain().focus().toggleUnderline().run()"
+        >
+          <u>U</u>
+        </button>
+        <button type="button" @mousedown.prevent @click="openFormulaFromSelection">LaTeX</button>
+        <button type="button" disabled>Tabelle</button>
+        <button type="button" disabled>Bild</button>
+      </fieldset>
+      <button
+        type="button"
+        class="editor-mode"
+        aria-label="Source Mode"
+        title="Source Mode"
+        :aria-pressed="sourceMode"
+        @click="toggleSourceMode"
+      >
+        <svg
+          aria-hidden="true"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.75"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M13 3H5v18h14V9z M13 3v6h6 M10 12l-2 2 2 2 M14 12l2 2-2 2" />
+        </svg>
+      </button>
+    </div>
 
-    <!-- Kontextmenü -->
+    <EditorContent
+      v-if="editor"
+      v-show="!sourceMode"
+      :editor="editor"
+      class="editor-content"
+      @click="closeContextMenu"
+      @dblclick="handleDoubleClick"
+    />
+
+    <textarea
+      v-if="!readonly"
+      v-show="sourceMode"
+      ref="sourceInput"
+      class="source-input"
+      aria-label="Markdown-Quelltext"
+      v-model="sourceText"
+      :placeholder="placeholder"
+    ></textarea>
+
     <div
-      v-if="contextMenu.visible"
+      v-if="contextMenu"
       class="context-menu"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
       @mouseleave="closeContextMenu"
     >
-      <button v-if="!contextMenu.isExistingWord" class="context-menu-item" @click="addParlanceWord">
-        Fachwort hinzufügen
-      </button>
       <button
-        v-if="contextMenu.isExistingWord"
-        class="context-menu-item remove"
-        @click="removeParlanceWord"
+        type="button"
+        class="context-menu-item"
+        :class="{ remove: contextMenu.isExistingWord }"
+        @click="toggleParlanceWord"
       >
-        Fachwort entfernen
+        {{ contextMenu.isExistingWord ? 'Fachwort entfernen' : 'Fachwort hinzufügen' }}
       </button>
     </div>
+
+    <dialog
+      v-if="!readonly"
+      ref="formulaDialog"
+      class="formula-dialog"
+      aria-label="LaTeX-Formel"
+      @close="onFormulaDialogClose"
+    >
+      <form class="formula-form" @submit.prevent="saveFormula">
+        <label v-if="formulaTarget?.kind === 'insert'">
+          Darstellung
+          <select v-model="formulaType">
+            <option value="inlineMath" :disabled="!formulaTarget.canInsertInline">Im Text</option>
+            <option value="blockMath">Eigene Zeile</option>
+          </select>
+        </label>
+        <label>
+          LaTeX-Formel
+          <textarea v-model="latex" rows="4" autofocus @input="formulaError = ''"></textarea>
+        </label>
+        <p v-if="formulaError" class="formula-error" role="alert">{{ formulaError }}</p>
+        <div class="formula-actions">
+          <button type="button" @click="formulaDialog?.close()">Abbrechen</button>
+          <button type="submit">
+            {{ formulaTarget?.kind === 'edit' ? 'Speichern' : 'Einfügen' }}
+          </button>
+        </div>
+      </form>
+    </dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch, ref, nextTick } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
+import { BlockMath, InlineMath } from '@tiptap/extension-mathematics'
+import { Markdown } from '@tiptap/markdown'
 import { Extension } from '@tiptap/core'
-import { Plugin } from '@tiptap/pm/state'
+import { NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 import type { Barrier, ParlanceMatch } from '@/api'
+import { analysisSpan, documentRange, editorText, remapSpans, remapSourceSpans } from './editorText'
+import { DelimitedMath } from './delimitedMath'
 
 import { operatorMatchLabels, type OperatorHighlight } from '@/operatorHighlights'
 
@@ -76,213 +180,97 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  'update:analysisText': [value: string]
   'update:barriers': [value: Barrier[]]
   'update:parlance_words': [value: ParlanceMatch[]]
 }>()
 
 const contextMenu = ref<{
-  visible: boolean
   x: number
   y: number
-  selectedWord: ParlanceMatch | null
+  word: ParlanceMatch
   isExistingWord: boolean
-}>({
-  visible: false,
-  x: 0,
-  y: 0,
-  selectedWord: null,
-  isExistingWord: false,
-})
+} | null>(null)
 
-const isSettingContent = { value: false }
-const lastText = { value: props.modelValue || '' }
+const headingLevels = [1, 2, 3] as const
+const sourceMode = ref(false)
+const sourceInput = ref<HTMLTextAreaElement | null>(null)
+const sourceText = computed({ get: () => props.modelValue, set: updateSource })
+const headingLevel = computed(
+  () => headingLevels.find((level) => editor.value?.isActive('heading', { level })) ?? 0,
+)
 
-const textToHtml = (text: string) => {
-  const escapedText = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+type FormulaType = 'inlineMath' | 'blockMath'
+type FormulaTarget =
+  | { kind: 'edit'; pos: number; doc: ProseMirrorNode }
+  | {
+      kind: 'insert'
+      from: number
+      to: number
+      blockPos: number
+      canInsertInline: boolean
+      doc: ProseMirrorNode
+    }
 
-  return escapedText
+const formulaDialog = ref<HTMLDialogElement | null>(null)
+const formulaTarget = shallowRef<FormulaTarget | null>(null)
+const formulaType = ref<FormulaType>('inlineMath')
+const latex = ref('')
+const formulaError = ref('')
+const katexOptions = { trust: false, throwOnError: true, strict: 'ignore' } as const
+
+function textToHtml(text: string) {
+  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return escaped
     .split('\n\n')
     .map((paragraph) => `<p>${paragraph.replace(/\n/g, '<br>')}</p>`)
     .join('')
 }
 
-// Count newlines before a given position in the text
-const countNewlinesBefore = (text: string, position: number) => {
-  let count = 0
-  for (let i = 0; i < Math.min(position, text.length); i++) {
-    if (text[i] === '\n') {
-      count++
-    }
-  }
-  return count
-}
-
-const groupedBarriers = computed(() => {
-  const text = props.modelValue || ''
-  const grouped = new Map<string, { start: number; end: number; numbers: string[] }>()
-
-  for (const barrier of props.barriers) {
-    // Adjust positions by subtracting the number of newlines before them
-    const newlinesBeforeStart = countNewlinesBefore(text, barrier.start)
-    const newlinesBeforeEnd = countNewlinesBefore(text, barrier.end)
-
-    const adjustedStart = barrier.start - newlinesBeforeStart
-    const adjustedEnd = barrier.end - newlinesBeforeEnd
-
-    const key = `${adjustedStart}:${adjustedEnd}`
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        start: adjustedStart,
-        end: adjustedEnd,
-        numbers: [barrier.barrier_number],
-      })
-    } else {
-      grouped.get(key)!.numbers.push(barrier.barrier_number)
-    }
-  }
-  return Array.from(grouped.values())
-})
-
-const groupedParlanceWords = computed(() => {
-  const text = props.modelValue || ''
-  const grouped = new Map<string, ParlanceMatch>()
-
-  for (const word of props.parlance_words) {
-    const newlinesBeforeStart = countNewlinesBefore(text, word.start)
-    const newlinesBeforeEnd = countNewlinesBefore(text, word.end)
-
-    const adjustedStart = word.start - newlinesBeforeStart
-    const adjustedEnd = word.end - newlinesBeforeEnd
-
-    const key = `${adjustedStart}:${adjustedEnd}`
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        start: adjustedStart,
-        end: adjustedEnd,
-        token: word.token,
-      })
-    }
-  }
-  return Array.from(grouped.values())
-})
-
-const mapIndexToPos = (doc: ProseMirrorNode, index: number) => {
-  let textIndex = 0
-  let found: number | null = null
-
-  doc.descendants((node, pos) => {
-    if (found !== null) return false
-
-    if (node.isText) {
-      const len = node.text?.length ?? 0
-      if (textIndex + len > index) {
-        found = pos + (index - textIndex)
-        return false
-      }
-      textIndex += len
-    }
-
-    return true
-  })
-
-  return found ?? doc.content.size
-}
-
-const barrierHighlight = Extension.create({
-  name: 'barrierHighlight',
+const annotations = Extension.create({
+  name: 'taskAnnotations',
   addProseMirrorPlugins() {
     return [
       new Plugin({
         props: {
-          decorations: (state) => {
-            if (props.highlightMode === 'operators' || !groupedBarriers.value.length) return null
-
-            const decorations = groupedBarriers.value
-              .map((barrier) => {
-                const from = mapIndexToPos(state.doc, barrier.start)
-                const to = mapIndexToPos(state.doc, barrier.end)
-                if (from >= to) return null
-                return Decoration.inline(from, to, {
-                  class: 'barrier',
-                  'data-barrier': barrier.numbers.join(','),
-                })
-              })
-              .filter((decoration) => decoration !== null)
-
-            return DecorationSet.create(state.doc, decorations)
-          },
-        },
-      }),
-    ]
-  },
-})
-
-const parlanceWordHighlight = Extension.create({
-  name: 'parlanceWordHighlight',
-  addProseMirrorPlugins() {
-    return [
-      new Plugin({
-        props: {
-          decorations: (state) => {
-            if (props.highlightMode !== 'all' || !groupedParlanceWords.value.length) return null
-
-            const decorations = groupedParlanceWords.value
-              .map((word) => {
-                const from = mapIndexToPos(state.doc, word.start)
-                const to = mapIndexToPos(state.doc, word.end)
-                if (from >= to) return null
-                return Decoration.inline(from, to, {
-                  class: 'parlance-word',
-                  'data-token': word.token,
-                })
-              })
-              .filter((decoration) => decoration !== null)
-
-            return DecorationSet.create(state.doc, decorations)
-          },
-        },
-      }),
-    ]
-  },
-})
-
-const operatorHighlight = Extension.create({
-  name: 'operatorHighlight',
-  addProseMirrorPlugins() {
-    return [
-      new Plugin({
-        props: {
-          decorations({ doc }) {
-            if (props.highlightMode === 'barriers' || !props.operators.length) return null
-
-            // Our plain-text editor represents a hard break as one newline and a
-            // paragraph boundary as two. Both occupy the same width in the document.
-            // Text starts at position 1 and ProseMirror counts UTF-16 code units.
-            const positions = [1]
-            let position = 1
-            for (const character of props.modelValue) {
-              position += character.length
-              positions.push(position)
+          decorations: ({ doc }) => {
+            const barriersByRange = new Map<
+              string,
+              { from: number; to: number; numbers: string[] }
+            >()
+            for (const barrier of props.highlightMode === 'operators' ? [] : props.barriers) {
+              const range = documentRange(doc, barrier)
+              if (!range) continue
+              const key = `${range.from}:${range.to}`
+              const existing = barriersByRange.get(key)
+              if (existing) existing.numbers.push(barrier.barrier_number)
+              else barriersByRange.set(key, { ...range, numbers: [barrier.barrier_number] })
             }
-
-            const marks = []
-            for (const { start, end, token, match } of props.operators) {
-              const from = positions[start]
-              const to = positions[end]
-              if (from === undefined || to === undefined || from >= to || to > doc.content.size)
-                continue
-              if (doc.textBetween(from, to) === token) {
-                const attributes = match
+            const decorations = [...barriersByRange.values()].map(({ from, to, numbers }) =>
+              Decoration.inline(from, to, { class: 'barrier', 'data-barrier': numbers.join(',') }),
+            )
+            for (const word of props.highlightMode === 'all' ? props.parlance_words : []) {
+              const range = documentRange(doc, word)
+              if (range)
+                decorations.push(
+                  Decoration.inline(range.from, range.to, { class: 'parlance-word' }),
+                )
+            }
+            if (props.highlightMode !== 'barriers') {
+              for (const operator of props.operators) {
+                const range = documentRange(doc, operator)
+                if (!range) continue
+                const attrs = operator.match
                   ? {
                       class: 'operator-highlight',
-                      'data-match': match,
-                      title: operatorMatchLabels[match],
+                      'data-match': operator.match,
+                      title: operatorMatchLabels[operator.match],
                     }
                   : { class: 'operator-highlight' }
-                marks.push(Decoration.inline(from, to, attributes))
+                decorations.push(Decoration.inline(range.from, range.to, attrs))
               }
             }
-            return DecorationSet.create(doc, marks)
+            return DecorationSet.create(doc, decorations)
           },
         },
       }),
@@ -290,19 +278,22 @@ const operatorHighlight = Extension.create({
   },
 })
 
+let lastValue = props.modelValue
+
 const editor = useEditor({
-  content: textToHtml(props.modelValue || ''),
-  parseOptions: { preserveWhitespace: 'full' },
+  content: props.readonly ? textToHtml(lastValue) : lastValue,
+  contentType: props.readonly ? 'html' : 'markdown',
   editable: !props.readonly,
   extensions: [
     StarterKit.configure({
       undoRedo: false,
-      bold: false,
-      italic: false,
+      bold: props.readonly ? false : {},
+      italic: props.readonly ? false : {},
+      underline: props.readonly ? false : {},
+      heading: props.readonly ? false : { levels: [...headingLevels] },
       strike: false,
       code: false,
       codeBlock: false,
-      heading: false,
       blockquote: false,
       horizontalRule: false,
       bulletList: false,
@@ -310,96 +301,74 @@ const editor = useEditor({
       listItem: false,
     }),
     Placeholder.configure({
-      placeholder: props.placeholder || '',
+      placeholder: props.placeholder,
       emptyEditorClass: 'is-editor-empty',
       showOnlyWhenEditable: false,
     }),
-    barrierHighlight,
-    parlanceWordHighlight,
-    operatorHighlight,
+    ...(!props.readonly
+      ? [
+          Markdown,
+          InlineMath.extend({ addInputRules: () => [] }).configure({
+            onClick: editFormula,
+            katexOptions,
+          }),
+          BlockMath.configure({
+            onClick: editFormula,
+            katexOptions: { ...katexOptions, displayMode: true },
+          }),
+          DelimitedMath,
+          annotations,
+        ]
+      : []),
   ],
-  onUpdate: ({ editor }) => {
-    if (props.readonly || isSettingContent.value) return
+  onCreate: ({ editor }) => {
+    if (!props.readonly) emit('update:analysisText', editorText(editor.state.doc).text)
+  },
+  onUpdate: ({ editor, transaction, appendedTransactions }) => {
+    if (props.readonly || sourceMode.value) return
 
-    const text = editor.getText()
-    const caret = Math.max(editor.state.selection.from - 1, 0)
-    const delta = text.length - lastText.value.length
-
-    const newBarriers = props.barriers
-      .map((barrier) => {
-        if (caret > barrier.start && caret <= barrier.end) {
-          // Caret inside barrier → delete it
-          return null
-        } else if (caret <= barrier.start) {
-          // Caret before barrier → move it
-          const newStart = barrier.start + delta
-          const newEnd = barrier.end + delta
-          // If barrier goes beyond text length, delete it
-          if (newStart < 0 || newEnd < 0 || newStart >= text.length) {
-            return null
-          }
-          return {
-            ...barrier,
-            start: newStart,
-            end: newEnd,
-          }
-        } else {
-          // Caret after barrier → check if barrier still valid
-          if (barrier.end > text.length) {
-            return null
-          }
-          return barrier
-        }
-      })
-      .filter((barrier) => barrier !== null)
-
-    const newParlanceWords = props.parlance_words
-      .map((word) => {
-        if (caret > word.start && caret <= word.end) {
-          return null
-        } else if (caret <= word.start) {
-          const newStart = word.start + delta
-          const newEnd = word.end + delta
-          if (newStart < 0 || newEnd < 0 || newStart >= text.length) {
-            return null
-          }
-          return {
-            ...word,
-            start: newStart,
-            end: newEnd,
-          }
-        } else {
-          if (word.end > text.length) {
-            return null
-          }
-          return word
-        }
-      })
-      .filter((word) => word !== null)
-
-    lastText.value = text
-    emit('update:modelValue', text)
-    emit('update:barriers', newBarriers)
-    emit('update:parlance_words', newParlanceWords)
+    const { doc } = editor.state
+    const transactions = [transaction, ...appendedTransactions]
+    lastValue = editor.isEmpty ? '' : editor.getMarkdown()
+    closeContextMenu()
+    emit('update:modelValue', lastValue)
+    emit('update:analysisText', editorText(doc).text)
+    if (props.barriers.length)
+      emit('update:barriers', remapSpans(props.barriers, transactions, doc))
+    if (props.parlance_words.length) {
+      emit('update:parlance_words', remapSpans(props.parlance_words, transactions, doc))
+    }
   },
 })
 
-watch(
-  () => props.modelValue,
-  (value) => {
-    if (!editor.value) return
-    const text = value || ''
-    if (editor.value.getText() === text) return
-    isSettingContent.value = true
-    const htmlContent = textToHtml(text)
-    editor.value.commands.setContent(htmlContent, {
-      emitUpdate: false,
-      parseOptions: { preserveWhitespace: 'full' },
-    })
-    lastText.value = text
-    isSettingContent.value = false
-  },
-)
+watch(() => props.modelValue, replaceContent)
+
+function replaceContent(value: string) {
+  const instance = editor.value
+  if (!instance || value === lastValue) return
+  lastValue = value
+  instance.commands.setContent(props.readonly ? textToHtml(value) : value, {
+    contentType: props.readonly ? 'html' : 'markdown',
+    emitUpdate: false,
+  })
+  closeContextMenu()
+  if (!props.readonly) emit('update:analysisText', editorText(instance.state.doc).text)
+}
+
+function updateSource(value: string) {
+  const instance = editor.value
+  if (!instance || value === lastValue) return
+
+  const before = instance.state.doc
+  replaceContent(value)
+  const after = instance.state.doc
+  emit('update:modelValue', value)
+  if (props.barriers.length)
+    emit('update:barriers', remapSourceSpans(props.barriers, before, after))
+  if (props.parlance_words.length) {
+    emit('update:parlance_words', remapSourceSpans(props.parlance_words, before, after))
+  }
+}
 
 watch(
   () => props.readonly,
@@ -423,103 +392,162 @@ watch(
   { deep: true },
 )
 
-const focusEditor = () => {
-  contextMenu.value.visible = false
-  if (!editor.value || props.readonly) return
-  editor.value.commands.focus()
-}
-
-const handleDoubleClick = async (e: MouseEvent) => {
-  if (props.readonly) return
-
-  // Warte bis ProseMirror den Doppelklick verarbeitet hat
-  await nextTick()
-
+function setHeading(event: Event) {
   if (!editor.value) return
+  const value = Number((event.target as HTMLSelectElement).value)
+  const level = headingLevels.find((level) => level === value)
+  const chain = editor.value.chain().focus()
+  if (level) chain.setHeading({ level }).run()
+  else chain.setParagraph().run()
+}
 
-  const { from, to } = editor.value.state.selection
-  const selectedText = editor.value.state.doc.textBetween(from, to)
+function openFormulaFromSelection() {
+  if (!editor.value) return
+  const { doc, selection } = editor.value.state
+  if (
+    selection instanceof NodeSelection &&
+    ['inlineMath', 'blockMath'].includes(selection.node.type.name)
+  ) {
+    editFormula(selection.node, selection.from)
+    return
+  }
 
-  if (!selectedText.trim()) return
+  const { from, to, $from, $to } = selection
+  const canInsertInline =
+    selection instanceof TextSelection && $from.sameParent($to) && $from.parent.isTextblock
+  const blockPos = $from.depth ? $from.after(1) : from
+  showFormulaDialog(
+    { kind: 'insert', doc, from, to, blockPos, canInsertInline },
+    canInsertInline ? 'inlineMath' : 'blockMath',
+    '',
+  )
+}
 
-  // Konvertiere ProseMirror Positionen zu Text Indizes
-  let textIndex = 0
-  let textFrom = 0
-  let textTo = 0
-  let isConvertingFrom = true
+function editFormula(node: ProseMirrorNode, pos: number) {
+  if (!editor.value || props.readonly) return
+  showFormulaDialog(
+    { kind: 'edit', doc: editor.value.state.doc, pos },
+    node.type.name === 'blockMath' ? 'blockMath' : 'inlineMath',
+    node.attrs.latex,
+  )
+}
 
-  editor.value.state.doc.descendants((node, nodePos) => {
-    if (node.isText) {
-      const nodeLen = node.text?.length ?? 0
+function showFormulaDialog(target: FormulaTarget, type: FormulaType, source: string) {
+  closeContextMenu()
+  formulaTarget.value = target
+  formulaType.value = type
+  latex.value = source
+  formulaError.value = ''
+  formulaDialog.value?.showModal()
+}
 
-      if (isConvertingFrom && nodePos + nodeLen > from) {
-        textFrom = textIndex + (from - nodePos)
-        isConvertingFrom = false
-      }
+function saveFormula() {
+  const instance = editor.value
+  const target = formulaTarget.value
+  if (!instance || !target) return
+  if (target.doc !== instance.state.doc) {
+    formulaError.value = 'Der Text wurde geändert. Öffnen Sie den Formeldialog erneut.'
+    return
+  }
 
-      if (nodePos + nodeLen >= to && textTo === 0) {
-        textTo = textIndex + (to - nodePos)
-      }
+  const source = latex.value.trim()
+  const type = formulaType.value
+  if (!source) {
+    formulaError.value = 'Geben Sie eine LaTeX-Formel ein.'
+    return
+  }
+  if (source.includes('$')) {
+    formulaError.value =
+      'Geben Sie die Formel ohne Dollarzeichen ein. Verwenden Sie \\char"24 für das Währungssymbol.'
+    return
+  }
+  if (type === 'inlineMath' && source.includes('\n')) {
+    formulaError.value = 'Geben Sie die Formel einzeilig ein oder wählen Sie „Eigene Zeile“.'
+    return
+  }
+  try {
+    katex.renderToString(source, { ...katexOptions, displayMode: type === 'blockMath' })
+  } catch (error) {
+    formulaError.value =
+      error instanceof Error ? error.message : 'Die Formel konnte nicht gelesen werden.'
+    return
+  }
 
-      textIndex += nodeLen
-    }
-  })
+  const { commands } = instance
+  const node = { type, attrs: { latex: source } }
+  let saved: boolean
+  if (target.kind === 'edit') {
+    saved =
+      type === 'inlineMath'
+        ? commands.updateInlineMath({ latex: source, pos: target.pos })
+        : commands.updateBlockMath({ latex: source, pos: target.pos })
+  } else if (type === 'inlineMath') {
+    saved = commands.insertContentAt({ from: target.from, to: target.to }, node)
+  } else {
+    const pos = instance.isEmpty ? { from: 0, to: target.doc.content.size } : target.blockPos
+    saved = commands.insertContentAt(pos, node)
+  }
 
-  // Suche ob ein existierendes Word bei dieser Position ist (mit Toleranz)
-  const existingWord = props.parlance_words.find((word) => {
-    // Toleranzbereich von ±2 für Position-Unterschiede
-    return Math.abs(word.start - textFrom) <= 2 && Math.abs(word.end - textTo) <= 2
-  })
+  if (saved) formulaDialog.value?.close()
+  else formulaError.value = 'Die Formel konnte an dieser Stelle nicht eingefügt werden.'
+}
 
+function onFormulaDialogClose() {
+  formulaTarget.value = null
+  editor.value?.commands.focus()
+}
+
+function focusEditor() {
+  closeContextMenu()
+  if (sourceMode.value) sourceInput.value?.focus()
+  else if (!props.readonly) editor.value?.commands.focus()
+}
+
+function toggleSourceMode() {
+  closeContextMenu()
+  sourceMode.value = !sourceMode.value
+}
+
+function handleDoubleClick(event: MouseEvent) {
+  if (props.readonly || !editor.value) return
+  const { state, view } = editor.value
+  const selection = view.dom.ownerDocument.getSelection()
+  if (!selection?.rangeCount || selection.isCollapsed) return
+
+  // The browser selects the word before ProseMirror receives selectionchange.
+  const range = selection.getRangeAt(0)
+  if (!view.dom.contains(range.startContainer) || !view.dom.contains(range.endContainer)) return
+  const from = view.posAtDOM(range.startContainer, range.startOffset)
+  const to = view.posAtDOM(range.endContainer, range.endOffset)
+  const selected = analysisSpan(state.doc, from, to)
+  const token = selected?.token.trim()
+  if (!selected || !token) return
+
+  const start =
+    selected.start + Array.from(selected.token.slice(0, selected.token.indexOf(token))).length
+  const end = start + Array.from(token).length
+  const existing = props.parlance_words.some((word) => word.start === start && word.end === end)
   contextMenu.value = {
-    visible: true,
-    x: e.clientX,
-    y: e.clientY,
-    selectedWord: existingWord || {
-      start: textFrom,
-      end: textTo,
-      token: selectedText.trim(),
-    },
-    isExistingWord: !!existingWord,
+    x: event.clientX,
+    y: event.clientY,
+    word: { start, end, token },
+    isExistingWord: existing,
   }
 }
 
-const addParlanceWord = () => {
-  if (!contextMenu.value.selectedWord) return
-
-  const newWord = {
-    start: contextMenu.value.selectedWord.start,
-    end: contextMenu.value.selectedWord.end,
-    token: contextMenu.value.selectedWord.token,
-  }
-
-  const updatedWords = [...props.parlance_words, newWord]
-  emit('update:parlance_words', updatedWords)
+function toggleParlanceWord() {
+  if (!contextMenu.value) return
+  const { word, isExistingWord } = contextMenu.value
+  const words = isExistingWord
+    ? props.parlance_words.filter((match) => match.start !== word.start || match.end !== word.end)
+    : [...props.parlance_words, word]
+  emit('update:parlance_words', words)
   closeContextMenu()
 }
 
-const removeParlanceWord = () => {
-  if (!contextMenu.value.selectedWord) return
-
-  const wordToRemove = contextMenu.value.selectedWord
-  const updatedWords = props.parlance_words.filter((word) => {
-    // Entferne das Wort wenn start und end passen (mit Toleranz)
-    return !(
-      Math.abs(word.start - wordToRemove.start) <= 2 && Math.abs(word.end - wordToRemove.end) <= 2
-    )
-  })
-
-  emit('update:parlance_words', updatedWords)
-  closeContextMenu()
+function closeContextMenu() {
+  contextMenu.value = null
 }
-
-const closeContextMenu = () => {
-  contextMenu.value.visible = false
-}
-
-onBeforeUnmount(() => {
-  editor.value?.destroy()
-})
 </script>
 
 <style scoped>
@@ -532,6 +560,130 @@ onBeforeUnmount(() => {
 
 .editor-content {
   min-height: 100%;
+}
+
+.editor:not(.readonly) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor:not(.readonly) .editor-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.toolbar {
+  display: flex;
+  flex-flow: row-reverse wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.25rem 0 0.5rem;
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid #ddd;
+}
+
+.formatting {
+  display: flex;
+  flex: 1 1 8rem;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.editor-mode {
+  order: -1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.toolbar button,
+.toolbar select,
+.formula-actions button {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #aaa;
+  border-radius: 0.3rem;
+  background: #fff;
+  color: #222;
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.toolbar button[aria-pressed='true'],
+.formula-actions button[type='submit'] {
+  border-color: #467a60;
+  background: #deeee6;
+}
+
+.formatting button:disabled,
+.formatting select:disabled {
+  border-color: #ddd;
+  background: #f5f5f5;
+  color: #777;
+}
+
+.source-input {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  padding: 0;
+  resize: none;
+  font: inherit;
+  font-family: monospace;
+  tab-size: inherit;
+}
+
+.source-input:focus-visible {
+  outline: 2px solid #589b79;
+  outline-offset: -2px;
+}
+
+.formula-dialog {
+  box-sizing: border-box;
+  width: min(26rem, 90vw);
+  padding: 1rem;
+  border: 1px solid #aaa;
+  border-radius: 0.6rem;
+}
+
+.formula-form,
+.formula-form label {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.formula-form {
+  gap: 0.75rem;
+}
+
+.formula-form textarea {
+  resize: vertical;
+  font-family: monospace;
+}
+
+.formula-error {
+  overflow-wrap: anywhere;
+  color: #a32222;
+  margin: 0;
+}
+
+.formula-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+:deep(.tiptap-mathematics-render--editable) {
+  cursor: pointer;
+}
+
+:deep([data-type='block-math']) {
+  overflow-x: auto;
 }
 
 .editor.readonly {
@@ -572,6 +724,7 @@ onBeforeUnmount(() => {
 
 :deep(.parlance-word) {
   font-weight: bold;
+  position: relative;
 }
 
 :deep(.parlance-word::before) {
