@@ -14,6 +14,8 @@ import deepsightLogo from '@/assets/logos/deepsight.png'
 import bbwLogo from '@/assets/logos/BBW.png'
 import bmasLogo from '@/assets/logos/BMAS.png'
 
+const currentYear = new Date().getFullYear()
+
 const logos = [
   { src: zfaLogo, url: 'https://zfamedien.de/', alt: 'ZFA-Medien' },
   { src: iftoLogo, url: 'https://www.ifto.de/', alt: 'IFTO' },
@@ -40,7 +42,7 @@ const logos = [
   <div class="footer-link-container">
     <p class="footer-link">
       <a href="https://www.tmdt.uni-wuppertal.de/">
-        &copy; Institute for Technologies and Management of Digital Transformation 2024. All Rights
+        &copy; Institute for Technologies and Management of Digital Transformation {{ currentYear }}. All Rights
         Reserved.
       </a>
       <RouterLink to="/impressum"><u>Impressum</u></RouterLink>

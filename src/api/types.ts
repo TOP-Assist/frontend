@@ -52,6 +52,18 @@ export interface AnalysisResult {
   parlance?: ParlanceMatch[]
 }
 
+export type FeedbackMode = 'translation' | 'barrier_analysis'
+
+export interface FeedbackCategories {
+  feedback_mode: FeedbackMode
+  categories: string[]
+}
+
+export interface FeedbackCategoriesVersion extends FeedbackCategories {
+  version: number
+  timestamp: string
+}
+
 export interface Feedback {
   ratings: Record<string, number>
   comment: string
@@ -60,10 +72,29 @@ export interface Feedback {
 
 export interface FeedbackRequest {
   text_original: string
-  text_translated: string
+  text_translated?: string | null
   strategy: string
-  feedback?: Feedback & {
-    mode: 'translation' | 'barrier_analysis'
-    barriers: string[]
+  categories_version: number
+
+  feedback: Feedback & {
+    mode: FeedbackMode
   }
+
+  barriers?: string[]
+  operators?: string[]
+}
+
+export interface FeedbackDraft {
+  text_original: string
+  text_translated?: string | null
+  strategy: string
+  mode: FeedbackMode
+  barriers?: string[]
+}
+
+export interface Description {
+  text_html: string
+  text_style: string
+  version: number
+  timestamp: string
 }

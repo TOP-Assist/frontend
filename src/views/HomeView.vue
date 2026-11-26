@@ -6,18 +6,53 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 <script setup lang="ts">
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import DOMPurify from 'dompurify'
+
+import { fetchDescription } from '@/api'
 
 const router = useRouter()
+const description_html = ref<string | null>(null)
+
+/** Retrieve and sanitize the current landing-page description. */
+async function get_description() {
+  try {
+    const description = await fetchDescription()
+
+    description_html.value = DOMPurify.sanitize(description.text_html, {
+      ALLOWED_TAGS: [
+        'h1', 'h2', 'h3',
+        'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's',
+        'ul', 'ol', 'li', 'a',
+        'blockquote', 'hr', 'pre', 'code',
+      ],
+      ALLOWED_ATTR: ['href', 'start'],
+    })
+  } catch (error) {
+    console.warn('Description could not be loaded:', error)
+  }
+}
 
 function goToTopAssist() {
   router.push({ name: 'assistant' })
 }
+
+onMounted(get_description)
 </script>
 
 <template>
   <div class="landing-page">
-    <div class="scrollable-content">
+    <!-- Description provided by the admin backend. -->
+    <!-- eslint-disable-next-line vue/no-v-html -->
+    <div
+      v-if="description_html !== null"
+      class="scrollable-content"
+      v-html="description_html"
+    ></div>
+
+    <!-- Fallback if the description is unavailable. -->
+    <div v-else class="scrollable-content">
       <h1>Herzlich Willkommen bei TOP Assist</h1>
 
       <p>
@@ -38,8 +73,8 @@ function goToTopAssist() {
       </p>
 
       <p>
-        Da sich TOP Assist noch in der Entwicklung befindet, kann es hin und wieder passieren, dass
-        das Werkzeug nicht immer optimal funktioniert und erreichbar ist oder unterschiedliche
+        Da sich TOP Assist noch in der Entwicklung befindet, kann es hin und wieder passieren,
+        dass das Werkzeug nicht immer optimal funktioniert und erreichbar ist oder unterschiedliche
         Optimierungsvorschläge angezeigt werden, auch wenn mehrere Testpersonen denselben Text
         eingeben.
       </p>
@@ -100,36 +135,42 @@ function goToTopAssist() {
   flex-direction: column;
   overflow: hidden;
 }
+
 .scrollable-content {
   flex: 1;
-  overflow-y: auto; /* only this part scrolls */
-  padding-right: 10px; /* optional, for scrollbar spacing */
+  overflow-y: auto;
+  padding-right: 10px;
 }
 
-h1 {
+.scrollable-content :deep(h1) {
   font-size: 2em;
   margin-bottom: 5px;
 }
 
-h3 {
+.scrollable-content :deep(h3) {
   font-size: 1.5em;
   margin-top: 10px;
 }
 
-p,
-li {
+.scrollable-content :deep(p),
+.scrollable-content :deep(li) {
   font-size: 1em;
   margin-bottom: 5px;
 }
 
-ul {
-  list-style-type: disc;
+.scrollable-content :deep(ul) {
+  list-style-type: square;
   padding-left: 20px;
 }
 
-ol {
+.scrollable-content :deep(ol) {
   padding-left: 20px;
 }
+
+.scrollable-content :deep(a) {
+  text-decoration: underline;
+}
+
 .icon-btn-img {
   width: 3vh;
   height: 3vh;
@@ -144,18 +185,18 @@ ol {
   margin-left: 10%;
   padding: 10px;
   width: 80%;
-  font-size: 1.1rem; /* minimal 18px requirement : 1.1rem*/
+  font-size: 1.1rem;
   font-weight: bold;
   border: none;
   border-radius: 20px;
-  background-color: #589b79; /* background - text contrast : 6.38 */
+  background-color: #589b79;
   color: #000000;
   cursor: pointer;
   transition:
     background-color 0.3s,
     opacity 0.9s;
-  align-self: flex-end center;
 }
+
 .cta-button:hover {
   background-color: rgb(231, 228, 228);
   opacity: 0.9;
@@ -163,9 +204,6 @@ ol {
   margin-top: 6px;
 }
 
-ul {
-  list-style-type: square;
-}
 .highlight {
   font-weight: bold;
 }
