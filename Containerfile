@@ -17,6 +17,8 @@ RUN npm run build
 
 FROM docker.io/library/nginx:1.30-alpine
 
+ENV ADMIN_API_PROXY_TARGET=http://admin-backend:8101
+
 COPY --from=builder /app/dist /usr/share/nginx/html
 # Installed as a template so the entrypoint can substitute the DNS resolver.
 ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1

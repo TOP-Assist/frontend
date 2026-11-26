@@ -7,19 +7,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
+
 import {
   analyzeText,
   fetchBarrierDefinitions,
   fetchParlanceWords,
-  submitFeedback,
   translateText,
   type Barrier,
   type BarrierDefinition,
-  type Feedback,
-  type FeedbackRequest,
+  type FeedbackDraft,
   type ParlanceMatch,
   type ParlanceWord,
 } from '@/api'
+
 import FeedbackModal from '@/components/FeedbackModal.vue'
 import RichTextarea from '@/components/RichTextarea.vue'
 import BarrierInfo from '@/components/BarrierInfo.vue'
@@ -30,7 +30,11 @@ const src_text = ref<string>('')
 const src_text_cached = ref<string>('')
 const target_text = ref('')
 const translation_mode = ref(true)
-const selectedDomain = ref<string | null>(localStorage.getItem('selectedDomain') || null)
+
+const selectedDomain = ref<string | null>(
+  localStorage.getItem('selectedDomain') || null,
+)
+
 localStorage.setItem('selectedDomain', selectedDomain.value || '')
 
 watch(selectedDomain, (val) => {
@@ -40,15 +44,22 @@ watch(selectedDomain, (val) => {
 const wait_res = ref(false)
 const score_src = ref(' ')
 const score_target = ref(' ')
-const show_feedback_modal = ref(false)
+
+const feedback_draft = ref<FeedbackDraft | null>(null)
+
 const show_barrier_lexikon_modal = ref(false)
 const strategy = ref('default')
 const all_barriers = ref<BarrierDefinition[]>([])
 const barriers = ref<Barrier[]>([])
 const all_parlance_words = ref<ParlanceWord[]>([])
 const parlance_words = ref<ParlanceMatch[]>([])
-const parlance_treshold = ref(parseInt(localStorage.getItem('parlance_treshold') ?? '') || 270)
+
+const parlance_treshold = ref(
+  parseInt(localStorage.getItem('parlance_treshold') ?? '') || 270,
+)
+
 localStorage.setItem('parlance_treshold', String(parlance_treshold.value))
+
 watch(parlance_treshold, (val) => {
   localStorage.setItem('parlance_treshold', String(val))
 })
@@ -67,20 +78,6 @@ onMounted(() => {
   get_all_barriers()
 })
 
-function store_feedback(feedbackData: Feedback) {
-  store_translation({
-    feedback: {
-      ...feedbackData,
-      mode: translation_mode.value ? 'translation' : 'barrier_analysis',
-      barriers: translation_mode.value
-        ? []
-        : barriers.value
-            .map((barrier) => barrier.title)
-            .filter((title): title is string => !!title),
-    },
-  })
-}
-
 function reset_values() {
   src_text.value = ''
   src_text_cached.value = ''
@@ -94,8 +91,10 @@ async function translate() {
   if (!src_text.value.trim() || src_text.value === src_text_cached.value) {
     return
   }
+
   target_text.value = ''
   wait_res.value = true
+
   try {
     const result = await translateText({
       text: src_text.value,
@@ -103,6 +102,7 @@ async function translate() {
       barriers: barriers.value,
       parlance_words: parlance_words.value.map((word) => word.token),
     })
+
     target_text.value = `${result.title}\n\n${result.optimized}`
     strategy.value = result.strategy_used
 
@@ -117,8 +117,10 @@ async function translate() {
 async function analize_src() {
   if (src_text.value) {
     wait_res.value = true
+
     try {
       const answer = await analyzeText(src_text.value, all_parlance_words.value)
+
       barriers.value = answer.barriers ?? []
       parlance_words.value = answer.parlance ?? []
     } catch (error) {
@@ -127,6 +129,7 @@ async function analize_src() {
   } else {
     barriers.value = []
   }
+
   wait_res.value = false
 }
 
@@ -135,6 +138,7 @@ async function get_parlance_words() {
     all_parlance_words.value = []
     return
   }
+
   try {
     all_parlance_words.value = await fetchParlanceWords(
       selectedDomain.value,
@@ -153,31 +157,20 @@ async function get_all_barriers() {
   }
 }
 
-async function store_translation(infos: Pick<FeedbackRequest, 'feedback'> = {}) {
-  const body: FeedbackRequest = {
-    text_original: src_text.value,
-    text_translated: target_text.value,
-    strategy: strategy.value,
-    ...infos,
-  }
-  try {
-    await submitFeedback(body)
-  } catch (error) {
-    console.log(error)
-  }
-}
-
 const copy_success_message = ref(false)
+
 function copy_to_clipboard() {
   navigator.clipboard.writeText(target_text.value)
+
   copy_success_message.value = true
-  // make the popover invisible again after 1.5 seconds
+
   setTimeout(() => {
     copy_success_message.value = false
   }, 1500)
 }
 
 // Click handlers: each action also hides the button's tooltip.
+
 function on_reset() {
   reset_values()
   tooltip_disabled.value = true
@@ -194,8 +187,34 @@ function on_analyze() {
   tooltip_disabled.value = true
 }
 
+/** Capture the current feedback context and open the feedback modal. */
 function open_feedback_modal() {
-  show_feedback_modal.value = true
+  if (wait_res.value || feedback_draft.value) {
+    return
+  }
+
+  feedback_draft.value = {
+    text_original: translation_mode.value
+      ? src_text_cached.value || src_text.value
+      : src_text.value,
+
+    text_translated: translation_mode.value
+      ? target_text.value
+      : null,
+
+    strategy: strategy.value,
+
+    mode: translation_mode.value
+      ? 'translation'
+      : 'barrier_analysis',
+
+    barriers: translation_mode.value
+      ? []
+      : barriers.value
+          .map((barrier) => barrier.title)
+          .filter((title): title is string => !!title),
+  }
+
   tooltip_disabled.value = true
 }
 
@@ -211,6 +230,7 @@ function on_copy() {
     <div class="domain-selector-container">
       <DomainSelector v-model="selectedDomain" />
     </div>
+
     <div class="textarea-container">
       <RichTextarea
         class="textarea"
@@ -219,6 +239,7 @@ function on_copy() {
         v-model:parlance_words="parlance_words"
         placeholder="Prüfungsaufgabe hier eingeben oder einfügen"
       />
+
       <button
         v-if="src_text"
         id="delete-btn"
@@ -229,12 +250,22 @@ function on_copy() {
         @blur="tooltip_disabled = false"
       >
         <img src="@/assets/icons/delete.png" alt="Delete" />
-        <span v-if="!tooltip_disabled" class="tooltip-text">Den Text löschen!</span>
+
+        <span v-if="!tooltip_disabled" class="tooltip-text">
+          Den Text löschen!
+        </span>
       </button>
     </div>
 
     <div class="btns-container">
-      <button class="optimieren-btn" @click="on_translate" :disabled="!src_text">Optimieren</button>
+      <button
+        class="optimieren-btn"
+        @click="on_translate"
+        :disabled="!src_text"
+      >
+        Optimieren
+      </button>
+
       <button
         class="optimieren-btn barriere"
         @click="on_analyze"
@@ -244,6 +275,7 @@ function on_copy() {
         :disabled="!src_text"
       >
         Analysieren
+
         <span v-if="!tooltip_disabled" class="tooltip-text">
           Analysiere den Text auf Sprachbarrieren.
         </span>
@@ -253,13 +285,20 @@ function on_copy() {
 
   <!-- Right side: Translated text and icons -->
   <div v-if="translation_mode" class="content-box right-box">
-    <RichTextarea class="textarea" id="right-box" readonly v-model="target_text" />
+    <RichTextarea
+      id="right-box"
+      class="textarea"
+      v-model="target_text"
+      readonly
+    />
+
     <div v-if="wait_res" class="skeleton">
       <div class="skeleton-text shimmer"></div>
       <div class="skeleton-text shimmer"></div>
       <div class="skeleton-text shimmer"></div>
       <div class="skeleton-text shimmer"></div>
       <div class="skeleton-text short shimmer"></div>
+
       <QueueOverlay
         :wait-res="wait_res"
         :delay-ms="8000"
@@ -268,84 +307,119 @@ function on_copy() {
         :close-on-backdrop="false"
       />
     </div>
+
     <div class="icons">
       <button
-        class="icon-btn"
         v-if="target_text"
+        class="icon-btn"
+        :disabled="wait_res || feedback_draft !== null"
         @click="open_feedback_modal"
         @mouseleave="tooltip_disabled = false"
         @focus="tooltip_disabled = false"
         @blur="tooltip_disabled = false"
       >
         <img src="@/assets/icons/rate.png" alt="Rate" />
-        <span v-if="!tooltip_disabled" class="tooltip-text">Bewerten Sie das Ergebnis.</span>
+
+        <span v-if="!tooltip_disabled" class="tooltip-text">
+          Bewerten Sie das Ergebnis.
+        </span>
       </button>
+
       <button
-        class="icon-btn"
         v-if="target_text"
+        class="icon-btn"
         @click="on_copy"
         @mouseleave="tooltip_disabled = false"
         @focus="tooltip_disabled = false"
         @blur="tooltip_disabled = false"
       >
         <img src="@/assets/icons/copy.png" alt="Copy" />
-        <span v-if="!tooltip_disabled" class="tooltip-text">Kopieren Sie das Ergebnis.</span>
-        <span v-if="copy_success_message" class="tooltip-text">Erfolgreich kopiert!</span>
+
+        <span v-if="!tooltip_disabled" class="tooltip-text">
+          Kopieren Sie das Ergebnis.
+        </span>
+
+        <span v-if="copy_success_message" class="tooltip-text">
+          Erfolgreich kopiert!
+        </span>
       </button>
     </div>
   </div>
+
+  <!-- Right side: Barrier analysis -->
   <div v-else class="content-box right-box">
-    <BarrierInfo class="textarea" id="right-box" :barriers="barriers" />
+    <BarrierInfo
+      id="right-box"
+      class="textarea"
+      :barriers="barriers"
+    />
+
     <div class="icons">
       <button
         class="icon-btn"
+        :disabled="wait_res || feedback_draft !== null"
         @click="open_feedback_modal"
         @mouseleave="tooltip_disabled = false"
         @focus="tooltip_disabled = false"
         @blur="tooltip_disabled = false"
       >
         <img src="@/assets/icons/rate.png" alt="Rate" />
-        <span v-if="!tooltip_disabled" class="tooltip-text">Bewerten Sie die Analyse.</span>
+
+        <span v-if="!tooltip_disabled" class="tooltip-text">
+          Bewerten Sie die Analyse.
+        </span>
       </button>
-      <!-- <button class="icon-btn" 
-                @click="show_barrier_lexikon_modal = true; tooltip_disabled = true"
-                @mouseleave="tooltip_disabled = false"
-                @focus="tooltip_disabled = false"
-                @blur="tooltip_disabled = false">
-                    <img src="@/assets/icons/lexikon.png" alt="Barrier Lexikon">
-                    <span v-if="!tooltip_disabled" class="tooltip-text">Zum Barriere-Lexikon</span>
-                </button> -->
     </div>
   </div>
 
+  <!-- Feedback modal -->
   <transition name="fade">
     <div
-      v-if="show_feedback_modal"
+      v-if="feedback_draft"
       class="feedback-modal"
       style="position: absolute; top: 70px; left: 30px; z-index: 999"
     >
       <FeedbackModal
-        :text="target_text"
-        :is_visible="show_feedback_modal"
-        :is_translate_model="translation_mode"
-        @give-feedback="store_feedback"
-        @close="show_feedback_modal = false"
+        :draft="feedback_draft"
+        @close="feedback_draft = null"
       />
     </div>
   </transition>
 
+  <!-- Barrier lexicon modal -->
   <transition name="fade">
-    <div v-if="show_barrier_lexikon_modal" class="barrier-lexikon-modal">
-      <div class="modal-overlay" @click="show_barrier_lexikon_modal = false"></div>
+    <div
+      v-if="show_barrier_lexikon_modal"
+      class="barrier-lexikon-modal"
+    >
+      <div
+        class="modal-overlay"
+        @click="show_barrier_lexikon_modal = false"
+      ></div>
+
       <div class="modal-content">
         <div class="modal-header">
           <h2>Barriere-Lexikon</h2>
-          <button class="close-btn" @click="show_barrier_lexikon_modal = false">✕</button>
+
+          <button
+            class="close-btn"
+            @click="show_barrier_lexikon_modal = false"
+          >
+            ✕
+          </button>
         </div>
+
         <div class="modal-body">
-          <div v-if="all_barriers.length === 0" class="no-barriers">Keine Barrieren verfügbar.</div>
+          <div v-if="all_barriers.length === 0" class="no-barriers">
+            Keine Barrieren verfügbar.
+          </div>
+
           <div v-else class="barriers-list">
-            <div v-for="(barrier, index) in all_barriers" :key="index" class="barrier-item">
+            <div
+              v-for="(barrier, index) in all_barriers"
+              :key="index"
+              class="barrier-item"
+            >
               <h3 class="barrier-title">{{ barrier.title }}</h3>
               <p class="barrier-description">{{ barrier.description }}</p>
             </div>
@@ -357,34 +431,29 @@ function on_copy() {
 </template>
 
 <style>
-/* style for modal */
 .feedback-modal {
   position: absolute;
   top: 0;
   right: 0;
-  z-index: 99; /* Ensure the modal is on top */
+  z-index: 99;
   display: flex;
-  width: 45%; /* Adjust the width as needed */
+  width: 45%;
   min-width: 500px;
-  height: auto; /* Adjust the height as needed */
-  /*background-color: whitesmoke; /* Background color for the modal */
-  /*border-radius: 10px; /* Rounded corners */
-  /*box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); /* Shadow effect */
-  /*padding: 20px; /* Padding inside the modal */
+  height: auto;
 }
-/* style for Survey End*/
+
 .content-box {
   display: flex;
-
   flex-direction: column;
-  /* justify-content: space-between; */
   width: 49%;
   border-radius: 5px;
 }
+
 .textarea-container {
   position: relative;
   width: 100%;
 }
+
 .domain-selector-container {
   display: flex;
   justify-content: flex-end;
@@ -418,7 +487,7 @@ function on_copy() {
   background: #ffffff;
   border: 1px solid #e0e0e0;
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   z-index: 100;
   max-height: 300px;
   overflow: hidden;
@@ -428,7 +497,6 @@ function on_copy() {
 
 #delete-btn {
   position: absolute;
-  /*bottom: 20px;*/
   top: 15px;
   right: 15px;
   width: 2vh;
@@ -440,7 +508,6 @@ function on_copy() {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  /*transition: background-color 0.3s, transform 0.2s;*/
   padding: 5px;
   box-shadow: none;
 }
@@ -471,7 +538,7 @@ function on_copy() {
 
 .textarea:focus,
 textarea:hover {
-  outline: 2px solid #589b79; /* background - border contrast : 4.57*/
+  outline: 2px solid #589b79;
   outline-offset: 0;
 }
 
@@ -483,14 +550,12 @@ textarea:hover {
 
 .optimieren-btn {
   margin-top: 10px;
-  /* margin-left: 70%; */
   padding: 10px;
   width: 35%;
-
-  font-size: 1.1rem; /* minimal 18px requirement : 1.1rem*/
+  font-size: 1.1rem;
   font-weight: bold;
   border-radius: 20px;
-  background-color: #589b79; /* background - text contrast : 6.38 */
+  background-color: #589b79;
   color: #000000;
   cursor: pointer;
   transition:
@@ -510,7 +575,6 @@ textarea:hover {
   background-color: rgb(231, 228, 228);
   opacity: 0.9;
   border: 2px solid grey;
-  /* margin-top: 6px; */
   transform: translateY(-1px);
 }
 
@@ -518,10 +582,12 @@ textarea:hover {
   margin-top: -10px;
   position: relative;
 }
+
 #right-box {
   background-color: rgb(231, 228, 228);
   border: none;
 }
+
 #right-box:focus {
   border: none;
   outline: none;
@@ -539,6 +605,7 @@ textarea:hover {
   border-radius: 4px;
   z-index: 2;
 }
+
 .skeleton-text {
   background-color: #c6c6c6;
   border-radius: 4px;
@@ -546,22 +613,27 @@ textarea:hover {
   padding: 2px;
   position: relative;
   overflow: hidden;
-}
-.skeleton-text {
   width: 90%;
   height: 18px;
 }
+
 .skeleton-text.short {
   width: 60%;
 }
+
 .shimmer::before {
   content: '';
   position: absolute;
   top: 0;
   left: -150px;
-  height: 100%;
   width: 150px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.4),
+    transparent
+  );
   animation: shimmer 1.2s infinite;
 }
 
@@ -573,14 +645,14 @@ textarea:hover {
 
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.5s ease;
+  transition: opacity 0.3s ease;
 }
+
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
 }
 
-/* Barrier Lexikon Modal */
 .barrier-lexikon-modal {
   position: fixed;
   top: 0;
@@ -599,7 +671,7 @@ textarea:hover {
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.5);
   cursor: pointer;
 }
 
@@ -649,8 +721,8 @@ textarea:hover {
 }
 
 .modal-body {
-  overflow-y: auto;
   padding: 20px;
+  overflow-y: auto;
   flex: 1;
 }
 
@@ -663,13 +735,13 @@ textarea:hover {
 .barrier-item {
   padding: 16px;
   border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  transition: all 0.2s;
+  border-radius: 8px;
+  transition: all 0.2s ease;
 }
 
 .barrier-item:hover {
   border-color: #589b7a;
-  box-shadow: 0 2px 8px rgba(88, 155, 122, 0.1);
+  box-shadow: 0 2px 4px rgba(88, 155, 122, 0.1);
 }
 
 .barrier-title {
@@ -689,15 +761,6 @@ textarea:hover {
   text-align: center;
   color: #999;
   padding: 40px 20px;
-}
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+  font-size: 1.1rem;
 }
 </style>

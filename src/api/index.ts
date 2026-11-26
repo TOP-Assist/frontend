@@ -6,6 +6,9 @@
 import type {
   AnalysisResult,
   BarrierDefinition,
+  Description,
+  FeedbackCategoriesVersion,
+  FeedbackMode,
   FeedbackRequest,
   ParlanceWord,
   TranslationRequest,
@@ -61,4 +64,25 @@ export function translateText(body: TranslationRequest): Promise<TranslationResu
 
 export async function submitFeedback(body: FeedbackRequest): Promise<void> {
   await send('/feedback', 'Storing feedback failed', jsonBody(body))
+}
+
+/** Retrieve the current landing-page description. */
+export function fetchDescription(): Promise<Description> {
+  return request('/description', 'Description lookup failed')
+}
+
+/** Retrieve the latest or a specific category version for a feedback mode. */
+export function fetchFeedbackCategories(
+  mode: FeedbackMode,
+  version?: number,
+): Promise<FeedbackCategoriesVersion> {
+  const params = new URLSearchParams({
+    feedback_mode: mode,
+  })
+
+  if (version !== undefined) {
+    params.set('version', String(version))
+  }
+
+  return request(`/feedback/categories?${params}`, 'Feedback category lookup failed')
 }

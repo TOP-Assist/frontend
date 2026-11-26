@@ -6,69 +6,97 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 
-const props = defineProps({
-  text: String,
-  is_visible: Boolean,
-  is_translate_model: Boolean,
-})
+import {
+  fetchFeedbackCategories,
+  submitFeedback,
+  type FeedbackCategoriesVersion,
+  type FeedbackDraft,
+} from '@/api'
 
-const emit = defineEmits(['update-text', 'give-feedback', 'close'])
+const props = defineProps<{
+  draft: FeedbackDraft
+}>()
 
-const feedback_translate = reactive<Record<string, number>>({
-  'Allgemeine Qualität der Optimierung': 0,
-  'Reduktion der sprachlichen Komplexität': 0,
-  'Übernahme von Fachwörtern': 0,
-  'Informationsstruktur und Gliederung': 0,
-})
+const emit = defineEmits<{
+  close: []
+}>()
 
-const feedback_barrier = reactive<Record<string, number>>({
-  'Sinnvolle Ergänzung zur Textoptimierung': 0,
-  'Übersichtlichkeit der Analyse': 0,
-  'Verständlichkeit der Erläuterungen': 0,
-  'Hilfreich für eigene zukünftige Texte': 0,
-})
-
-const feedback = computed<Record<string, number>>(
-  () =>
-    (props.is_translate_model ? feedback_translate : feedback_barrier) as Record<string, number>,
-)
-
-const suggestion = ref(props.text || '')
+const config = ref<FeedbackCategoriesVersion | null>(null)
+const feedback = ref<Record<string, number>>({})
 const comment = ref('')
 
-function give_feedback() {
-  emit('give-feedback', {
-    ratings: { ...feedback.value },
-    comment: comment.value,
-    suggestion: suggestion.value,
-  })
-  emit('close')
+const loading = ref(false)
+const submitting = ref(false)
+const error = ref('')
+
+const is_translate_model = computed(() => props.draft.mode === 'translation')
+
+const isModified = computed(
+  () =>
+    Object.values(feedback.value).some((rating) => rating !== 0) ||
+    comment.value.trim() !== '',
+)
+
+/** Retrieve the latest feedback categories for the selected mode. */
+async function get_feedback_categories() {
+  loading.value = true
+  error.value = ''
+
+  try {
+    config.value = await fetchFeedbackCategories(props.draft.mode)
+
+    feedback.value = Object.fromEntries(
+      config.value.categories.map((category) => [category, 0]),
+    )
+  } catch {
+    error.value = 'Die Bewertungskategorien konnten nicht geladen werden.'
+  } finally {
+    loading.value = false
+  }
 }
 
-function handle_cancel() {
-  emit('close')
+/** Store feedback with the category version displayed to the user. */
+async function give_feedback() {
+  if (!config.value || submitting.value || !isModified.value) {
+    return
+  }
+
+  submitting.value = true
+  error.value = ''
+
+  const { mode, ...context } = props.draft
+
+  try {
+    await submitFeedback({
+      ...context,
+      categories_version: config.value.version,
+      feedback: {
+        mode,
+        ratings: { ...feedback.value },
+        comment: comment.value,
+        suggestion: context.text_translated ?? '',
+      },
+    })
+
+    emit('close')
+  } catch {
+    error.value = 'Das Feedback konnte nicht gespeichert werden. Bitte versuchen Sie es erneut.'
+  } finally {
+    submitting.value = false
+  }
 }
 
-const isModified = computed(() => {
-  // Check if any rating was changed
-  const ratingChanged = Object.keys(feedback.value).some((key) => feedback.value[key] !== 0)
-
-  // Check if any text was entered
-  const textChanged = suggestion.value.trim() !== props.text?.trim() || comment.value.trim() !== ''
-
-  return ratingChanged || textChanged
-})
+onMounted(get_feedback_categories)
 </script>
 
 <template>
-  <div v-if="is_visible" class="review-box" role="form" aria-labelledby="review-heading">
-    <!-- <b v-if="is_translate_model">Optimierung:</b> <br>
-    <div v-if="is_translate_model" class="text-display">{{ text }}</div> -->
+  <div class="review-box" role="form" aria-labelledby="review-heading">
     <p id="review-heading">
       <strong v-if="is_translate_model">Ihre Bewertung zu dieser Optimierung:</strong>
       <strong v-else>Ihre Bewertung zu dieser Analyse:</strong>
+
       <span class="tooltip-text">
         <p>Bewertung:</p>
         <p>1 Stern: sehr negativ</p>
@@ -78,68 +106,101 @@ const isModified = computed(() => {
         <p>5 Sterne: sehr positiv</p>
       </span>
     </p>
-    <div v-for="(value, key) in feedback" :key="key" class="feedback-group">
-      <label>{{ key }}</label>
-      <div class="stars" role="radiogroup" :aria-label="`Bewerte ${key}`">
-        <span
-          v-for="star in 5"
-          :key="star"
-          class="star"
-          :class="{ active: star <= feedback[key] }"
-          :aria-label="`${star} Stern${star > 1 ? 'e' : ''}`"
-          :aria-checked="feedback[key] === star"
-          role="radio"
-          tabindex="0"
-          @click="feedback[key] = star"
-          @keydown.enter.prevent="feedback[key] = star"
-        >
-          ★
-        </span>
-      </div>
-    </div>
 
-    <label for="anmerkungen" style="margin-top: 20px"
-      ><p id="review-heading"><strong>Anmerkungen:</strong></p></label
-    ><br />
-    <textarea
-      class="modal-textarea"
-      id="anmerkungen"
-      v-model="comment"
-      placeholder="Zusätzliche Anmerkungen..."
-      aria-label="Zusätzliche Anmerkungen"
-    ></textarea>
+    <p v-if="loading">Bewertungskategorien werden geladen …</p>
+
+    <template v-if="config">
+      <div
+        v-for="category in config.categories"
+        :key="category"
+        class="feedback-group"
+      >
+        <label>{{ category }}</label>
+
+        <div class="stars" role="radiogroup" :aria-label="`Bewerte ${category}`">
+          <button
+            v-for="star in 5"
+            :key="star"
+            type="button"
+            class="star"
+            :class="{ active: star <= (feedback[category] ?? 0) }"
+            :aria-label="`${star} Stern${star > 1 ? 'e' : ''}`"
+            :aria-checked="feedback[category] === star"
+            :disabled="submitting"
+            role="radio"
+            @click="feedback[category] = star"
+          >
+            ★
+          </button>
+        </div>
+      </div>
+
+      <label for="anmerkungen" class="comment-label">
+        <strong>Anmerkungen:</strong>
+      </label>
+
+      <textarea
+        id="anmerkungen"
+        v-model="comment"
+        class="modal-textarea"
+        placeholder="Zusätzliche Anmerkungen..."
+        aria-label="Zusätzliche Anmerkungen"
+        :disabled="submitting"
+      ></textarea>
+    </template>
+
+    <p v-if="error" class="feedback-error" role="alert">
+      {{ error }}
+    </p>
 
     <div class="buttons">
-      <button class="modal-btn" :disabled="!isModified" @click="give_feedback">Abschicken</button>
-      <button class="modal-btn" @click="handle_cancel">Abbrechen</button>
+      <button
+        v-if="config"
+        class="modal-btn"
+        :disabled="!isModified || submitting"
+        @click="give_feedback"
+      >
+        {{ submitting ? 'Wird gespeichert …' : 'Abschicken' }}
+      </button>
+
+      <button
+        v-else-if="!loading"
+        class="modal-btn"
+        @click="get_feedback_categories"
+      >
+        Erneut laden
+      </button>
+
+      <button
+        class="modal-btn"
+        :disabled="submitting"
+        @click="emit('close')"
+      >
+        Abbrechen
+      </button>
     </div>
   </div>
 </template>
 
-<style>
-* {
-  font-family: Helvetica, Arial, sans-serif;
-}
+<style scoped>
 p {
   font-size: 1.1rem;
 }
+
 .buttons {
   display: flex;
   justify-content: center;
-  bottom: 20px;
-  right: 20px;
+  flex-wrap: wrap;
 }
 
 .review-box {
   border-radius: 20px;
   padding: 10px;
-  /* max-width: 50%; */
   width: 100%;
   height: 100%;
-  overflow-y: auto; /* Adds vertical scrollbar if needed */
+  overflow-y: auto;
   max-height: 80vh;
   text-align: center;
-  /*padding: 20px;*/
   background-color: white;
   border: 2px solid #ccc;
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
@@ -159,6 +220,22 @@ p {
   font-size: 1.1rem;
 }
 
+.star {
+  border: none;
+  padding: 0;
+}
+
+.star:disabled {
+  cursor: default;
+}
+
+.comment-label {
+  display: block;
+  margin-top: 20px;
+  margin-bottom: 10px;
+  font-size: 1.2rem;
+}
+
 .modal-textarea {
   width: 80%;
   height: 10vh;
@@ -175,11 +252,11 @@ p {
   padding: 10px;
   width: 25%;
   min-width: 200px;
-  font-size: 1.1rem; /* minimal 18px requirement : 1.1rem*/
+  font-size: 1.1rem;
   font-weight: bold;
   border: none;
   border-radius: 20px;
-  background-color: #589b79; /* background - text contrast : 6.38 */
+  background-color: #589b79;
   color: #000000;
   cursor: pointer;
   transition:
@@ -193,6 +270,7 @@ p {
   cursor: default;
   opacity: 0.6;
 }
+
 .modal-btn:not(:disabled):hover {
   background-color: rgb(231, 228, 228);
   opacity: 0.9;
@@ -200,33 +278,7 @@ p {
   margin-top: 6px;
 }
 
-.text-display {
-  max-height: 200px;
-  overflow-y: auto;
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 5px;
-  background-color: #f9f9f9;
-  margin-bottom: 20px;
-  text-align: left;
-  word-wrap: break-word;
-}
-
-.text-display::-webkit-scrollbar {
-  width: 8px;
-}
-
-.text-display::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 5px;
-}
-
-.text-display::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 5px;
-}
-
-.text-display::-webkit-scrollbar-thumb:hover {
-  background: #555;
+.feedback-error {
+  color: #a12727;
 }
 </style>

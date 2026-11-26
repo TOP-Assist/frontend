@@ -17,39 +17,67 @@ server {
     gzip_vary on;
     gzip_types text/css application/javascript application/json image/svg+xml;
 
-    # Vue SPA
+    # Vue SPA.
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # Always revalidate the entrypoint so clients pick up new asset hashes.
+    # Always revalidate the entrypoint.
     location = /index.html {
         add_header Cache-Control "no-cache";
     }
 
-    # Vite emits content-hashed file names here, so they never change.
+    # Content-hashed frontend assets.
     location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable";
         try_files $uri =404;
     }
 
-    # Re-resolve the backend periodically so that nginx follows it to a new
-    # address after a container restart. The resolver is filled in from
-    # /etc/resolv.conf by the nginx image's entrypoint at container start.
+    # Re-resolve the backends after container restarts.
     resolver ${NGINX_LOCAL_RESOLVERS} valid=10s;
 
-    # Backend API
+    set $admin_backend ${ADMIN_API_PROXY_TARGET};
+
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Public landing-page description.
+    location = /v1/description {
+        limit_except GET {
+            deny all;
+        }
+
+        proxy_pass $admin_backend;
+    }
+
+    # Public feedback categories.
+    location = /v1/feedback/categories {
+        limit_except GET {
+            deny all;
+        }
+
+        proxy_pass $admin_backend;
+    }
+
+    # Public feedback submission.
+    location = /v1/feedback {
+        limit_except POST {
+            deny all;
+        }
+
+        proxy_pass $admin_backend;
+    }
+
+    # TOP Assist backend API.
     location /v1/ {
         set $backend http://backend:8000;
         proxy_pass $backend;
 
-        proxy_http_version 1.1;
-        # LLM translations can outlast nginx's 60s default.
+        # LLM translations can outlast nginx's default timeout.
         proxy_read_timeout 300s;
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
