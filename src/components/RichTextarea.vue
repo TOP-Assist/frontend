@@ -7,66 +7,68 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <template>
   <div class="editor" v-bind="$attrs" :class="{ readonly }" @click.self="focusEditor">
-    <div v-if="editor && !readonly" class="toolbar">
-      <fieldset class="formatting" :disabled="sourceMode" aria-label="Textformatierung">
-        <select aria-label="Absatzformat" :value="headingLevel" @change="setHeading">
-          <option value="0">Normaler Text</option>
-          <option v-for="level in headingLevels" :key="level" :value="level">H{{ level }}</option>
-        </select>
+    <Teleport v-if="editor && !readonly" to="#formatting-tools">
+      <div class="toolbar">
+        <fieldset class="formatting" :disabled="sourceMode" aria-label="Textformatierung">
+          <select aria-label="Absatzformat" :value="headingLevel" @change="setHeading">
+            <option value="0">Normaler Text</option>
+            <option v-for="level in headingLevels" :key="level" :value="level">H{{ level }}</option>
+          </select>
+          <button
+            type="button"
+            aria-label="Fett"
+            :aria-pressed="editor.isActive('bold')"
+            @mousedown.prevent
+            @click="editor.chain().focus().toggleBold().run()"
+          >
+            <strong>B</strong>
+          </button>
+          <button
+            type="button"
+            aria-label="Kursiv"
+            :aria-pressed="editor.isActive('italic')"
+            @mousedown.prevent
+            @click="editor.chain().focus().toggleItalic().run()"
+          >
+            <em>I</em>
+          </button>
+          <button
+            type="button"
+            aria-label="Unterstrichen"
+            :aria-pressed="editor.isActive('underline')"
+            @mousedown.prevent
+            @click="editor.chain().focus().toggleUnderline().run()"
+          >
+            <u>U</u>
+          </button>
+          <button type="button" @mousedown.prevent @click="openFormulaFromSelection">LaTeX</button>
+          <button type="button" disabled>Tabelle</button>
+          <button type="button" disabled>Bild</button>
+        </fieldset>
         <button
           type="button"
-          aria-label="Fett"
-          :aria-pressed="editor.isActive('bold')"
-          @mousedown.prevent
-          @click="editor.chain().focus().toggleBold().run()"
+          class="editor-mode"
+          aria-label="Source Mode"
+          title="Source Mode"
+          :aria-pressed="sourceMode"
+          @click="toggleSourceMode"
         >
-          <strong>B</strong>
+          <svg
+            aria-hidden="true"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.75"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M13 3H5v18h14V9z M13 3v6h6 M10 12l-2 2 2 2 M14 12l2 2-2 2" />
+          </svg>
         </button>
-        <button
-          type="button"
-          aria-label="Kursiv"
-          :aria-pressed="editor.isActive('italic')"
-          @mousedown.prevent
-          @click="editor.chain().focus().toggleItalic().run()"
-        >
-          <em>I</em>
-        </button>
-        <button
-          type="button"
-          aria-label="Unterstrichen"
-          :aria-pressed="editor.isActive('underline')"
-          @mousedown.prevent
-          @click="editor.chain().focus().toggleUnderline().run()"
-        >
-          <u>U</u>
-        </button>
-        <button type="button" @mousedown.prevent @click="openFormulaFromSelection">LaTeX</button>
-        <button type="button" disabled>Tabelle</button>
-        <button type="button" disabled>Bild</button>
-      </fieldset>
-      <button
-        type="button"
-        class="editor-mode"
-        aria-label="Source Mode"
-        title="Source Mode"
-        :aria-pressed="sourceMode"
-        @click="toggleSourceMode"
-      >
-        <svg
-          aria-hidden="true"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.75"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M13 3H5v18h14V9z M13 3v6h6 M10 12l-2 2 2 2 M14 12l2 2-2 2" />
-        </svg>
-      </button>
-    </div>
+      </div>
+    </Teleport>
 
     <EditorContent
       v-if="editor"
@@ -151,7 +153,7 @@ import type { Barrier, ParlanceMatch } from '@/api'
 import { analysisSpan, documentRange, editorText, remapSpans, remapSourceSpans } from './editorText'
 import { DelimitedMath } from './delimitedMath'
 
-import { operatorMatchLabels, type OperatorHighlight } from '@/operatorHighlights'
+import type { OperatorHighlight } from '@/operatorHighlights'
 
 defineOptions({
   inheritAttrs: false,
@@ -257,16 +259,17 @@ const annotations = Extension.create({
                 )
             }
             if (props.highlightMode !== 'barriers') {
-              for (const operator of props.operators) {
+              for (const [index, operator] of props.operators.entries()) {
                 const range = documentRange(doc, operator)
                 if (!range) continue
-                const attrs = operator.match
-                  ? {
-                      class: 'operator-highlight',
-                      'data-match': operator.match,
-                      title: operatorMatchLabels[operator.match],
-                    }
-                  : { class: 'operator-highlight' }
+                const attrs: Record<string, string> = {
+                  class: 'operator-highlight',
+                  'data-operator': String(index),
+                  'data-side': 'input',
+                  'aria-describedby': `operator-input-${index}`,
+                  tabindex: '0',
+                }
+                if (operator.match) attrs['data-match'] = operator.match
                 decorations.push(Decoration.inline(range.from, range.to, attrs))
               }
             }
@@ -576,20 +579,13 @@ function closeContextMenu() {
 
 .toolbar {
   display: flex;
-  flex-flow: row-reverse wrap;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.25rem 0 0.5rem;
-  margin-bottom: 0.4rem;
-  border-bottom: 1px solid #ddd;
+  align-items: center;
+  gap: 0.3rem;
 }
 
 .formatting {
   display: flex;
-  flex: 1 1 8rem;
-  flex-wrap: wrap;
   gap: 0.3rem;
-  min-width: 0;
   border: 0;
   margin: 0;
   padding: 0;

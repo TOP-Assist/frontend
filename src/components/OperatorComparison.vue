@@ -7,7 +7,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { operatorMatchLabels } from '@/operatorHighlights'
 import type { ValidationResult } from '@/api'
 
 const props = defineProps<{
@@ -21,75 +20,60 @@ const percent = new Intl.NumberFormat('de-DE', { style: 'percent', maximumFracti
 </script>
 
 <template>
-  <details open class="comparison">
-    <summary>Operatorenvergleich</summary>
-    <div role="status">
-      <p v-if="status === 'loading'">Operatoren werden verglichen …</p>
-      <p v-else-if="status === 'error'">Der Operatorenvergleich ist nicht verfügbar.</p>
-      <template v-else-if="ordered && unordered">
-        <p v-if="!ordered.meta.input_operators.length && !ordered.meta.output_operators.length">
-          In beiden Texten wurden keine Operatoren gefunden.
-        </p>
-        <template v-else>
-          <ul
-            v-if="ordered.meta.input_occurrences?.length || ordered.meta.output_occurrences?.length"
-            class="match-legend"
-            aria-label="Farbmarkierungen im Text"
-          >
-            <li
-              v-for="(label, match) in operatorMatchLabels"
-              :key="match"
-              class="operator-highlight"
-              :data-match="match"
-            >
-              {{ label }}
-            </li>
-          </ul>
-          <dl>
+  <div class="comparison" role="status" aria-label="Operatorenvergleich">
+    <span v-if="status === 'loading'">Operatoren werden verglichen …</span>
+    <span v-else-if="status === 'error'">Der Operatorenvergleich ist nicht verfügbar.</span>
+    <template v-else-if="ordered && unordered">
+      <span v-if="!ordered.meta.input_operators.length && !ordered.meta.output_operators.length">
+        In beiden Texten wurden keine Operatoren gefunden.
+      </span>
+      <template v-else>
+        <span class="comparison-title">Operatorenvergleich</span>
+        <dl>
+          <div>
             <dt>An gleicher Position</dt>
             <dd>{{ percent.format(ordered.score) }}</dd>
-            <dt>Unabhängig von der Position</dt>
+          </div>
+          <div>
+            <dt>Positionsunabhängig</dt>
             <dd>{{ percent.format(unordered.score) }}</dd>
-          </dl>
-        </template>
+          </div>
+        </dl>
       </template>
-    </div>
-  </details>
+    </template>
+  </div>
 </template>
 
 <style scoped>
 .comparison {
-  margin-top: 0.75rem;
-  background: white;
-  padding: 0.75rem 1rem;
-  border-radius: var(--panel-radius);
-  font-size: 1rem;
+  min-width: 0;
+  margin-inline-end: auto;
+  color: #505050;
+  font-size: 0.8125rem;
+  line-height: 1.35;
 }
-summary {
-  cursor: pointer;
-  font-weight: bold;
-}
-.match-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  list-style: none;
-  padding: 0;
-}
-.match-legend li {
-  padding: 0.15em 0.4em;
+.comparison-title {
+  color: #3d4742;
+  font-weight: 600;
 }
 dl {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  margin: 0.25rem 0 0;
+}
+dl > div {
+  display: flex;
+  flex-direction: column-reverse;
+}
+dt {
+  font-size: 0.75rem;
 }
 dd {
   margin: 0;
-  font-weight: bold;
-  text-align: right;
-}
-p {
-  margin-bottom: 0;
+  color: #305942;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 </style>
