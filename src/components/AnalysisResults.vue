@@ -6,13 +6,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import {
-  fetchOperatorDefinitions,
-  type Barrier,
-  type OperatorAnalysis,
-  type OperatorDefinition,
-} from '@/api'
+import { computed, watch } from 'vue'
+import type { Barrier, OperatorAnalysis } from '@/api'
+import { definitions, catalogStatus, loadDefinitions } from './operatorDefinitions'
 import BarrierInfo from './BarrierInfo.vue'
 
 const tabs = ['Barrieren', 'Operatoren'] as const
@@ -24,7 +20,6 @@ const props = defineProps<{
   status: 'idle' | 'loading' | 'ready' | 'error'
 }>()
 
-const definitions = ref<Map<string, OperatorDefinition>>()
 const operatorRows = computed(() => {
   const analysis = props.analysis
   return analysis?.operators.map((operator, index) => {
@@ -38,19 +33,6 @@ const operatorRows = computed(() => {
     }
   })
 })
-const catalogStatus = ref<'idle' | 'loading' | 'error' | 'ready'>('idle')
-async function loadDefinitions() {
-  if (catalogStatus.value === 'loading' || definitions.value) return
-  catalogStatus.value = 'loading'
-  try {
-    const entries = await fetchOperatorDefinitions()
-    definitions.value = new Map(entries.map((entry) => [entry.operator.toLowerCase(), entry]))
-    catalogStatus.value = 'ready'
-  } catch {
-    catalogStatus.value = 'error'
-  }
-}
-
 watch(tab, (selected) => {
   if (selected === 'Operatoren' && catalogStatus.value === 'idle') void loadDefinitions()
 })

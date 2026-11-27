@@ -26,6 +26,7 @@ import {
 } from '@/api'
 import { compareOperatorPositions } from '@/operatorHighlights'
 import FeedbackModal from '@/components/FeedbackModal.vue'
+import OperatorInspector from '@/components/OperatorInspector.vue'
 import OperatorComparison from '@/components/OperatorComparison.vue'
 import RichTextarea from '@/components/RichTextarea.vue'
 import AnalysisResults from '@/components/AnalysisResults.vue'
@@ -39,7 +40,7 @@ const src_analysis_text = ref('')
 const src_text_cached = ref<string>('')
 const target_text = ref('')
 const translation_mode = ref(true)
-const selectedDomain = ref<string | null>(localStorage.getItem('selectedDomain') || null)
+const selectedDomain = ref<string | null>(localStorage.getItem('selectedDomain') || '')
 localStorage.setItem('selectedDomain', selectedDomain.value || '')
 
 watch(selectedDomain, (val) => {
@@ -80,7 +81,11 @@ const renderedTranslation = computed(() =>
 const sourceOperators = computed(() =>
   translation_mode.value && comparisonMeta.value
     ? comparedOperators.value?.input
-    : operatorAnalysis.value?.occurrences,
+    : operatorAnalysis.value?.occurrences?.map((occurrence, i) => ({
+        ...occurrence,
+        lemma:
+          operatorAnalysis.value?.operators_lemmatized?.[i] ?? operatorAnalysis.value?.operators[i],
+      })),
 )
 
 watch(
@@ -300,8 +305,14 @@ function on_copy() {
 </script>
 
 <template>
-  <div class="assistant-workspace">
+  <OperatorInspector
+    class="assistant-workspace"
+    :input="sourceOperators"
+    :output="comparedOperators?.output"
+    :translation-mode="translation_mode"
+  >
     <div class="domain-selector-container">
+      <div id="formatting-tools"></div>
       <DomainSelector v-model="selectedDomain" />
     </div>
     <div class="textarea-container source-editor">
@@ -367,7 +378,13 @@ function on_copy() {
           :close-on-backdrop="false"
         />
       </div>
-      <div class="icons">
+      <div v-if="target_text" class="icons result-footer">
+        <OperatorComparison
+          v-if="comparisonStatus"
+          :status="comparisonStatus"
+          :results="comparison"
+        />
+
         <button
           class="icon-btn"
           v-if="target_text"
@@ -393,11 +410,6 @@ function on_copy() {
         </button>
       </div>
     </div>
-    <OperatorComparison
-      v-if="translation_mode && comparisonStatus"
-      :status="comparisonStatus"
-      :results="comparison"
-    />
     <AnalysisResults
       v-show="!translation_mode"
       v-model:tab="analysisTab"
@@ -419,7 +431,7 @@ function on_copy() {
         </button>
       </div>
     </AnalysisResults>
-  </div>
+  </OperatorInspector>
 
   <transition name="fade">
     <div
@@ -481,9 +493,9 @@ function on_copy() {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-areas:
-    'domain .'
+    'domain domain'
     'source result'
-    'actions comparison';
+    'actions .';
   column-gap: 20px;
   align-items: start;
   width: 100%;
@@ -500,14 +512,11 @@ function on_copy() {
 .btns-container {
   grid-area: actions;
 }
-.assistant-workspace > .comparison {
-  grid-area: comparison;
-}
 
 @media (max-width: 768px) {
   .assistant-workspace {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: 'domain' 'source' 'actions' 'result' 'comparison';
+    grid-template-areas: 'domain' 'source' 'actions' 'result';
   }
   .result-pane {
     margin-top: 20px;
@@ -524,43 +533,27 @@ function on_copy() {
 }
 .domain-selector-container {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
-  width: 100%;
-}
-
-.domain-selector__trigger {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
+  gap: 0.5rem;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: calc((100% - 20px) / 2);
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 3px;
+  margin-bottom: 5px;
 }
 
-.domain-selector__trigger:hover {
-  border-color: #b0b0b0;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+@media (max-width: 768px) {
+  .domain-selector-container {
+    width: 100%;
+  }
 }
 
-.domain-selector__dropdown {
-  position: absolute;
-  top: 100%;
-  left: auto;
-  right: 0;
-  margin-top: 4px;
-  background: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  z-index: 100;
-  max-height: 300px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+.domain-select {
+  padding: 0.25rem;
+  font: inherit;
+  font-size: 0.875rem;
 }
 
 #delete-btn {
@@ -651,7 +644,26 @@ textarea:hover {
   transform: translateY(-1px);
 }
 
+.textarea-container.result-pane {
+  background: rgb(231, 228, 228);
+  border-radius: var(--panel-radius);
+  height: 350px;
+  display: flex;
+  flex-direction: column;
+}
+
+.result-footer.icons {
+  position: static;
+  align-items: center;
+  justify-content: flex-end;
+  border-top: 1px solid #d2d3cf;
+  padding: 0.5rem 1rem 0.65rem;
+  padding-inline-start: 1vh;
+}
+
 #right-box {
+  flex: 1;
+  min-height: 0;
   background-color: rgb(231, 228, 228);
   border: none;
 }

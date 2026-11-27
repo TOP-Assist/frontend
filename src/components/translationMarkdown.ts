@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 deepsight GmbH
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { operatorMatchLabels, type OperatorHighlight } from '@/operatorHighlights'
+import type { OperatorHighlight } from '@/operatorHighlights'
 import katex from 'katex'
 import { Marked, Renderer, type TokenizerAndRendererExtension } from 'marked'
 
@@ -125,7 +125,7 @@ export function translationDocument(markdown: string, operators: OperatorHighlig
   for (const run of runs) {
     const fragment = document.createDocumentFragment()
     let cursor = run.start
-    for (const { start, end, token, match } of operators) {
+    for (const [index, { start, end, token, match }] of operators.entries()) {
       if (start >= run.end || end <= cursor || !match) continue
       if (characters.slice(start, end).join('') !== token) continue
       const from = Math.max(start, cursor)
@@ -134,7 +134,10 @@ export function translationDocument(markdown: string, operators: OperatorHighlig
       const mark = document.createElement('span')
       mark.className = 'operator-highlight'
       mark.dataset.match = match
-      mark.title = operatorMatchLabels[match]
+      mark.dataset.operator = String(index)
+      mark.dataset.side = 'output'
+      mark.setAttribute('aria-describedby', `operator-output-${index}`)
+      mark.tabIndex = 0
       mark.textContent = characters.slice(from, to).join('')
       fragment.append(mark)
       cursor = to
